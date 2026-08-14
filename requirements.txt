@@ -1,0 +1,8 @@
+numpy>=1.26,<2.3
+requests>=2.31
+opencv-python-headless>=4.8
+ultralytics>=8.3
+psutil>=5.9
+Flask>=3.0
+# Optional for OpenVINO:
+# openvino>=2025.0

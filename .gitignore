@@ -1,0 +1,138 @@
+# ============================================================
+# Smart Fire Detection v2 - .gitignore
+# ============================================================
+
+# ----------------------------
+# Python
+# ----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.so
+
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python package/build
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# ----------------------------
+# Environment / Secrets
+# ----------------------------
+.env
+.env.*
+!.env.example
+
+# Local secrets
+secrets/
+*.key
+*.pem
+
+# ----------------------------
+# AI Models
+# ----------------------------
+# PyTorch / YOLO weights
+models/*.pt
+models/*.pth
+models/*.onnx
+models/*.engine
+models/*.torchscript
+
+# OpenVINO generated model directories/files
+models/*_openvino_model/
+models/*.xml
+models/*.bin
+
+# ให้ Git เก็บโฟลเดอร์ models ไว้
+!models/.gitkeep
+
+# ----------------------------
+# Calibration
+# ----------------------------
+# Calibration ที่ขึ้นกับตำแหน่งติดตั้งจริง
+calibration/*.json
+
+# รูปที่ใช้ calibration
+calibration/captures/
+calibration/verification/
+calibration/bearing_verification/
+
+# ให้ Git เก็บโฟลเดอร์ calibration
+!calibration/.gitkeep
+
+# ----------------------------
+# Runtime / Generated Images
+# ----------------------------
+static/*.jpg
+static/*.jpeg
+static/*.png
+
+# Generated runtime data
+static/status.json
+static/*.tmp
+
+# ให้ Git เก็บโฟลเดอร์ static
+!static/.gitkeep
+
+# ----------------------------
+# Logs / Temporary files
+# ----------------------------
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# ----------------------------
+# Test / Coverage
+# ----------------------------
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ----------------------------
+# IDE / Editor
+# ----------------------------
+.vscode/
+.idea/
+*.code-workspace
+
+# ----------------------------
+# Windows
+# ----------------------------
+Thumbs.db
+Thumbs.db:encryptable
+Desktop.ini
+$RECYCLE.BIN/
+
+# ----------------------------
+# macOS
+# ----------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ----------------------------
+# Linux
+# ----------------------------
+*~
+.directory
+
+# ----------------------------
+# Misc
+# ----------------------------
+*.zip
+*.rar
+*.7z
