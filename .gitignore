@@ -2,137 +2,195 @@
 # Smart Fire Detection v2 - .gitignore
 # ============================================================
 
-# ----------------------------
+
+# ============================================================
 # Python
-# ----------------------------
+# ============================================================
+
 __pycache__/
 *.py[cod]
 *$py.class
 *.pyd
 *.so
 
-# Python virtual environments
+# Virtual environments
 venv/
 .venv/
 env/
 ENV/
 
-# Python package/build
+# Python build / package
 build/
 dist/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
 
-# ----------------------------
+
+# ============================================================
 # Environment / Secrets
-# ----------------------------
+# ============================================================
+
 .env
 .env.*
 !.env.example
 
-# Local secrets
 secrets/
 *.key
 *.pem
 
-# ----------------------------
-# AI Models
-# ----------------------------
-# PyTorch / YOLO weights
+
+# ============================================================
+# AI Models / Exported Models
+# ============================================================
+
 models/*.pt
 models/*.pth
 models/*.onnx
 models/*.engine
 models/*.torchscript
 
-# OpenVINO generated model directories/files
+# OpenVINO
 models/*_openvino_model/
 models/*.xml
 models/*.bin
 
-# ให้ Git เก็บโฟลเดอร์ models ไว้
+# Keep models folder
 !models/.gitkeep
 
-# ----------------------------
+
+# ============================================================
 # Calibration
-# ----------------------------
-# Calibration ที่ขึ้นกับตำแหน่งติดตั้งจริง
+# ============================================================
+
+# Site-specific calibration
 calibration/*.json
 
-# รูปที่ใช้ calibration
+# Calibration captures / verification images
 calibration/captures/
 calibration/verification/
 calibration/bearing_verification/
 
-# ให้ Git เก็บโฟลเดอร์ calibration
+# Keep calibration folder
 !calibration/.gitkeep
 
-# ----------------------------
-# Runtime / Generated Images
-# ----------------------------
+
+# ============================================================
+# Runtime / Generated Static Files
+# ============================================================
+
+# Direct files under static
 static/*.jpg
 static/*.jpeg
 static/*.png
-
-# Generated runtime data
-static/status.json
+static/*.json
 static/*.tmp
 
-# ให้ Git เก็บโฟลเดอร์ static
+# Detection test results
+static/detection_runs/
+
+# Full sweep test results
+static/sweep_runs/
+
+# Hard-negative candidate collection
+# สำคัญ: เก็บไว้ local แต่ไม่ commit เข้า Git
+static/hard_negative_runs/
+
+# Stability test results
+static/stability_runs/
+
+# Camera / PTZ test images
+static/camera_test.jpg
+static/sync_preset_*.jpg
+static/detection_test_*.jpg
+
+# Keep static folder
 !static/.gitkeep
 
-# ----------------------------
-# Logs / Temporary files
-# ----------------------------
+
+# ============================================================
+# Dataset / Training Feedback
+# ============================================================
+
+# Negative datasets ที่ export ออกมาจากระบบ
+# ไม่ควร push image dataset จำนวนมากเข้า Git ปกติ
+negative_datasets/
+
+# Generated dataset workspace
+datasets/hard_negative_addon_*/
+
+# Training outputs (Ultralytics)
+runs/
+runs/detect/
+runs/train/
+
+
+# ============================================================
+# Logs / Temporary Files
+# ============================================================
+
 *.log
 logs/
+
 tmp/
 temp/
+
 *.tmp
 *.bak
 *.swp
 *.swo
 
-# ----------------------------
-# Test / Coverage
-# ----------------------------
+
+# ============================================================
+# Testing / Coverage
+# ============================================================
+
 .pytest_cache/
 .coverage
 coverage.xml
 htmlcov/
 
-# ----------------------------
+
+# ============================================================
 # IDE / Editor
-# ----------------------------
+# ============================================================
+
 .vscode/
 .idea/
 *.code-workspace
 
-# ----------------------------
+
+# ============================================================
 # Windows
-# ----------------------------
+# ============================================================
+
 Thumbs.db
 Thumbs.db:encryptable
 Desktop.ini
 $RECYCLE.BIN/
 
-# ----------------------------
+
+# ============================================================
 # macOS
-# ----------------------------
+# ============================================================
+
 .DS_Store
 .AppleDouble
 .LSOverride
 
-# ----------------------------
+
+# ============================================================
 # Linux
-# ----------------------------
+# ============================================================
+
 *~
 .directory
 
-# ----------------------------
-# Misc
-# ----------------------------
+
+# ============================================================
+# Archives
+# ============================================================
+
 *.zip
 *.rar
 *.7z

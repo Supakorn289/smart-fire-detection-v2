@@ -4,7 +4,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 # Camera / RTSP
-CAMERA_IP = os.getenv('CAMERA_IP', '192.168.0.100')
+CAMERA_IP = os.getenv('CAMERA_IP', '192.168.1.39')
 CAMERA_PORT = int(os.getenv('CAMERA_PORT', '81'))
 CAMERA_USER = os.getenv('CAMERA_USER', 'admin')
 CAMERA_PWD = os.getenv('CAMERA_PWD', '888888')
