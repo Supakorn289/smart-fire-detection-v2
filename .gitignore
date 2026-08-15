@@ -1,5 +1,5 @@
 # ============================================================
-# Smart Fire Detection v2 - .gitignore
+# Smart Fire Detection v2
 # ============================================================
 
 
@@ -13,13 +13,11 @@ __pycache__/
 *.pyd
 *.so
 
-# Virtual environments
 venv/
 .venv/
 env/
 ENV/
 
-# Python build / package
 build/
 dist/
 *.egg-info/
@@ -41,92 +39,76 @@ secrets/
 
 
 # ============================================================
-# AI Models / Exported Models
+# AI Models
 # ============================================================
 
-models/*.pt
-models/*.pth
-models/*.onnx
-models/*.engine
-models/*.torchscript
-
-# OpenVINO
-models/*_openvino_model/
-models/*.xml
-models/*.bin
-
-# Keep models folder
+models/*
 !models/.gitkeep
+
+# ถ้าภายหลังมีไฟล์ README ใน models/
+!models/README.md
 
 
 # ============================================================
 # Calibration
 # ============================================================
+#
+# Calibration เป็นข้อมูลเฉพาะ:
+# - กล้อง
+# - Lens / Zoom
+# - Site
+# - ตำแหน่งติดตั้ง
+#
+# ไม่ควร Commit เข้า Git
+# ============================================================
 
-# Site-specific calibration
-calibration/*.json
+calibration/*
 
-# Calibration captures / verification images
-calibration/captures/
-calibration/verification/
-calibration/bearing_verification/
-
-# Keep calibration folder
+# Keep folder
 !calibration/.gitkeep
 
+# ถ้าภายหลังสร้างตัวอย่าง configuration
+!calibration/*.example.json
+
 
 # ============================================================
-# Runtime / Generated Static Files
+# Runtime Generated Files
 # ============================================================
 
-# Direct files under static
 static/*.jpg
 static/*.jpeg
 static/*.png
 static/*.json
 static/*.tmp
 
-# Detection test results
 static/detection_runs/
-
-# Full sweep test results
 static/sweep_runs/
-
-# Hard-negative candidate collection
-# สำคัญ: เก็บไว้ local แต่ไม่ commit เข้า Git
+static/stability_runs/
 static/hard_negative_runs/
 
-# Stability test results
-static/stability_runs/
+# Telegram / Alert images waiting to send
+static/alert_spool/*
 
-# Camera / PTZ test images
-static/camera_test.jpg
-static/sync_preset_*.jpg
-static/detection_test_*.jpg
-
-# Keep static folder
+# Keep directories
 !static/.gitkeep
+!static/alert_spool/.gitkeep
 
 
 # ============================================================
-# Dataset / Training Feedback
+# Dataset / Training
 # ============================================================
 
-# Negative datasets ที่ export ออกมาจากระบบ
-# ไม่ควร push image dataset จำนวนมากเข้า Git ปกติ
 negative_datasets/
 
-# Generated dataset workspace
 datasets/hard_negative_addon_*/
 
-# Training outputs (Ultralytics)
 runs/
 runs/detect/
 runs/train/
 
 
 # ============================================================
-# Logs / Temporary Files
+# Logs / Temporary
 # ============================================================
 
 *.log
@@ -152,7 +134,7 @@ htmlcov/
 
 
 # ============================================================
-# IDE / Editor
+# IDE
 # ============================================================
 
 .vscode/
