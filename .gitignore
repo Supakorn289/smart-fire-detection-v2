@@ -28,24 +28,50 @@ pip-wheel-metadata/
 # ============================================================
 # Environment / Secrets
 # ============================================================
+#
+# ห้าม Commit Environment จริง
+# ============================================================
 
 .env
 .env.*
+
+# อนุญาตเฉพาะ Template
 !.env.example
 
+
+# Production Environment
+production.env
+deploy/production.env
+
+# Local secret variants
+*.secret.env
+*.local.env
+
+
+# Secret files
 secrets/
+
 *.key
 *.pem
+*.crt
+*.p12
+*.pfx
 
 
 # ============================================================
 # AI Models
 # ============================================================
+#
+# Model binaries อาจมีขนาดใหญ่
+# และไม่ควร Commit โดยไม่ตั้งใจ
+# ============================================================
 
 models/*
+
+# Keep folder
 !models/.gitkeep
 
-# ถ้าภายหลังมีไฟล์ README ใน models/
+# Documentation ภายใน models/
 !models/README.md
 
 
@@ -53,13 +79,15 @@ models/*
 # Calibration
 # ============================================================
 #
-# Calibration เป็นข้อมูลเฉพาะ:
-# - กล้อง
-# - Lens / Zoom
-# - Site
-# - ตำแหน่งติดตั้ง
+# Calibration อาจเฉพาะ:
 #
-# ไม่ควร Commit เข้า Git
+# - Camera
+# - Lens
+# - Zoom
+# - Site
+# - Position
+#
+# จึงไม่ควร Commit Calibration จริง
 # ============================================================
 
 calibration/*
@@ -67,30 +95,34 @@ calibration/*
 # Keep folder
 !calibration/.gitkeep
 
-# ถ้าภายหลังสร้างตัวอย่าง configuration
+# Example calibration files สามารถ Commit ได้
 !calibration/*.example.json
 
 
 # ============================================================
 # Runtime Generated Files
 # ============================================================
+#
+# ใช้ static/* แทน static/
+#
+# เพื่อให้สามารถ Re-include .gitkeep ได้
+# ============================================================
 
-static/*.jpg
-static/*.jpeg
-static/*.png
-static/*.json
-static/*.tmp
+static/*
 
-static/detection_runs/
-static/sweep_runs/
-static/stability_runs/
-static/hard_negative_runs/
 
-# Telegram / Alert images waiting to send
+# Keep static directory
+!static/.gitkeep
+
+
+# ============================================================
+# Alert spool
+# ============================================================
+
+!static/alert_spool/
+
 static/alert_spool/*
 
-# Keep directories
-!static/.gitkeep
 !static/alert_spool/.gitkeep
 
 
@@ -108,10 +140,32 @@ runs/train/
 
 
 # ============================================================
+# Benchmark
+# ============================================================
+#
+# ปกติถูก ignore อยู่แล้วจาก static/*
+# เพิ่มไว้เป็น Documentation
+# ============================================================
+
+static/benchmark_runs/
+
+
+# ============================================================
+# Detection / Sweep outputs
+# ============================================================
+
+static/detection_runs/
+static/sweep_runs/
+static/stability_runs/
+static/hard_negative_runs/
+
+
+# ============================================================
 # Logs / Temporary
 # ============================================================
 
 *.log
+
 logs/
 
 tmp/
@@ -128,6 +182,7 @@ temp/
 # ============================================================
 
 .pytest_cache/
+
 .coverage
 coverage.xml
 htmlcov/
@@ -139,6 +194,7 @@ htmlcov/
 
 .vscode/
 .idea/
+
 *.code-workspace
 
 
@@ -148,7 +204,9 @@ htmlcov/
 
 Thumbs.db
 Thumbs.db:encryptable
+
 Desktop.ini
+
 $RECYCLE.BIN/
 
 

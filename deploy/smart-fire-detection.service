@@ -1,0 +1,67 @@
+[Unit]
+Description=Smart Fire Detection v2
+Documentation=Smart Fire Detection v2 Production Runtime
+Wants=network-online.target
+After=network-online.target
+
+
+[Service]
+Type=simple
+
+# ============================================================
+# Runtime user
+# ============================================================
+
+User=smartfire
+Group=smartfire
+
+
+# ============================================================
+# Project directory
+# ============================================================
+
+WorkingDirectory=/opt/smart-fire-detection-v2
+
+
+# ============================================================
+# Production configuration
+# ============================================================
+
+EnvironmentFile=/etc/smart-fire-detection/production.env
+
+# ให้ Python แสดง log ออก journalctl ทันที
+Environment=PYTHONUNBUFFERED=1
+
+
+# ============================================================
+# Main application
+# ============================================================
+
+ExecStart=/opt/smart-fire-detection-v2/venv/bin/python /opt/smart-fire-detection-v2/main.py
+
+
+# ============================================================
+# Restart policy
+# ============================================================
+
+Restart=on-failure
+RestartSec=5
+
+
+# ============================================================
+# Shutdown
+# ============================================================
+
+TimeoutStopSec=15
+
+
+# ============================================================
+# Basic security
+# ============================================================
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+
+[Install]
+WantedBy=multi-user.target
