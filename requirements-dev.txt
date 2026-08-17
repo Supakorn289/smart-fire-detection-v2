@@ -1,0 +1,54 @@
+# ============================================================
+# Smart Fire Detection v2
+# Development / Testing Dependencies
+# ============================================================
+#
+# ไฟล์นี้ใช้สำหรับ:
+#
+# - Development environment
+# - Unit testing
+# - Local verification
+# - CI testing ในอนาคต
+#
+# Production Runtime ไม่จำเป็นต้องติดตั้งไฟล์นี้
+# ให้ใช้ requirements.txt สำหรับ Production
+#
+# ============================================================
+
+
+# ============================================================
+# Runtime Dependencies
+# ============================================================
+#
+# โหลด dependency หลักจาก requirements.txt
+#
+# ทำให้ Development environment มี package
+# เหมือน Production Runtime ก่อน
+#
+# ============================================================
+
+-r requirements.txt
+
+
+# ============================================================
+# Unit Testing
+# ============================================================
+
+pytest==9.1.1
+จากนี้เครื่อง Development ใหม่ติดตั้งได้ด้วย:
+
+python -m pip install -r requirements-dev.txt
+
+แล้วทดสอบ:
+
+python -m pytest -q
+
+ผลปัจจุบันที่ควรได้คือ:
+
+24 passed
+
+ส่วน Production ยังใช้:
+
+python -m pip install -r requirements.txt
+
+ไม่ต้องติดตั้ง requirements-dev.txt ครับ.
