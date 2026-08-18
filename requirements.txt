@@ -1,8 +1,33 @@
+# ============================================================
+# Smart Fire Detection v2
+# Runtime Dependencies
+# ============================================================
+
 numpy>=1.26,<2.3
 requests>=2.31
+
+# Computer Vision
 opencv-python-headless>=4.8
+
+# AI / YOLO
 ultralytics>=8.3
+
+# Runtime monitoring
 psutil>=5.9
+
+# Dashboard
 Flask>=3.0
-# Optional for OpenVINO:
+
+# Production WSGI server for Dashboard
+waitress>=3.0
+
+
+# ============================================================
+# Optional AI Backend
+# ============================================================
+#
+# Production installer installs OpenVINO separately.
+#
+# Uncomment only when installing manually.
+#
 # openvino>=2025.0

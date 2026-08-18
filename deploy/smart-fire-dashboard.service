@@ -5,16 +5,18 @@ Documentation=Smart Fire Detection v2 Web Dashboard
 Wants=network-online.target
 After=network-online.target
 
-# Dashboard อ่านไฟล์ที่ main.py สร้าง
-# แต่ไม่บังคับว่า Detection service ต้อง Online ตลอด
+# Dashboard อ่าน Runtime output ที่ main.py สร้าง
+# แต่ไม่บังคับว่า Detection Service
+# ต้อง Online ตลอดเวลา
 After=smart-fire-detection.service
 
 
 [Service]
 Type=simple
 
+
 # ============================================================
-# Runtime user
+# Runtime User
 # ============================================================
 
 User=smartfire
@@ -22,14 +24,14 @@ Group=smartfire
 
 
 # ============================================================
-# Project directory
+# Project Directory
 # ============================================================
 
 WorkingDirectory=/opt/smart-fire-detection-v2
 
 
 # ============================================================
-# Production configuration
+# Production Configuration
 # ============================================================
 
 EnvironmentFile=/etc/smart-fire-detection/production.env
@@ -38,14 +40,28 @@ Environment=PYTHONUNBUFFERED=1
 
 
 # ============================================================
-# Dashboard application
+# Production WSGI Server
+# ============================================================
+#
+# Development:
+#
+#   python app.py
+#
+# Production:
+#
+#   Waitress -> app:app
+#
+# app.py มี Flask application object ชื่อ:
+#
+#   app
+#
 # ============================================================
 
-ExecStart=/opt/smart-fire-detection-v2/venv/bin/python /opt/smart-fire-detection-v2/app.py
+ExecStart=/opt/smart-fire-detection-v2/venv/bin/waitress-serve --host=0.0.0.0 --port=5000 app:app
 
 
 # ============================================================
-# Restart policy
+# Restart Policy
 # ============================================================
 
 Restart=on-failure
@@ -60,7 +76,7 @@ TimeoutStopSec=10
 
 
 # ============================================================
-# Basic security
+# Basic Security
 # ============================================================
 
 NoNewPrivileges=true

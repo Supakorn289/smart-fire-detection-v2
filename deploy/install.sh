@@ -798,6 +798,7 @@ packages = [
     "requests",
     "psutil",
     "flask",
+    "waitress",
     "torch",
     "ultralytics",
     "openvino",

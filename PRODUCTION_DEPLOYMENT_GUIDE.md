@@ -1,4 +1,5 @@
 # Smart Fire Detection v2
+
 # Production Deployment Guide
 
 คู่มือการติดตั้ง, Commissioning, Calibration, Validation, เปิด Service, ดูแลระบบ และ Update Smart Fire Detection v2 บน Production Server
@@ -19,34 +20,49 @@ smart-fire-detection        smart-fire-dashboard
        .service                    .service
           │                         │
           ▼                         ▼
-        main.py                   app.py
+        main.py               waitress-serve
           │                         │
-          ▼                         │
-       static/ ─────────────────────┘
+          ▼                         ▼
+        static/                   app:app
+          │                         │
+          └───────────────┬─────────┘
+                          ▼
+                    Web Dashboard
 ```
 
-Detection Service
+## Detection Service
+
+รับผิดชอบ
 
 ```text
-Camera
+Camera / RTSP
 PTZ
-AI
-Consensus
+Fresh Frame
+Stable Frame
+AI Detection
+Multi-frame Consensus
 Bearing
 Distance
 GPS
 Alert
 Telegram
-Runtime outputs
+Runtime Outputs
 ```
 
-Dashboard Service
+## Dashboard Service
+
+รับผิดชอบ
 
 ```text
 Web Dashboard
+Latest Frame
+Latest Alert
+Runtime Status
 /api/status
-static file display
+Static File Display
 ```
+
+Dashboard ไม่ควบคุม Camera, PTZ หรือ AI โดยตรง
 
 ---
 
@@ -55,9 +71,9 @@ static file display
 ```text
 Development Validation
         ↓
-Copy/Clone Project
+Copy / Clone Project
         ↓
-Production OS/Python
+Production OS / Python
         ↓
 install.sh
         ↓
@@ -97,6 +113,8 @@ Detection Service
         ↓
 Dashboard Service
         ↓
+Service Validation
+        ↓
 Reboot Test
         ↓
 Production Ready
@@ -116,11 +134,15 @@ python main.py
 
 ห้าม Enable systemd ก่อน Validation
 
-ห้ามใช้ Calibration จาก Site เก่าโดยไม่ตรวจ
+ห้ามใช้ Calibration จาก Site เก่าโดยไม่ตรวจสอบ
 
-ห้ามใช้ Development Benchmark เป็น Production Benchmark
+ห้ามใช้ Development Benchmark แทน Production Benchmark
 
 ห้าม Commit Production secrets
+
+ห้ามเปิด Dashboard Port 5000 สู่ Public Internet โดยตรง
+
+ห้ามรัน `main.py` ซ้อนกับ Detection Service ที่กำลัง Active
 
 ---
 
@@ -160,19 +182,24 @@ Dashboard systemd unit
 
 # 5. Production Runtime User
 
-Production Service ใช้
+Production Runtime ใช้
 
 ```text
-smartfire
-```
-
-Group
-
-```text
-smartfire
+User  : smartfire
+Group : smartfire
 ```
 
 ทั้ง Detection และ Dashboard ต้องรันด้วย Account นี้ ไม่ใช่ root
+
+Root ใช้เฉพาะงาน Administration เช่น
+
+```text
+Installation
+Environment configuration
+Service installation
+Permissions
+System maintenance
+```
 
 ---
 
@@ -185,52 +212,53 @@ Debian Linux
 systemd
 Python 3.12.x
 Network access to Camera
-Internet accessระหว่างติดตั้ง Python packages ถ้าจำเป็น
-AI model
 Storage สำหรับ Runtime outputs
+AI model
 ```
+
+ระหว่างติดตั้ง Packages อาจต้องใช้ Internet access
 
 ---
 
-# 7. ตรวจ Server
+# 7. ตรวจ Production Server
 
-OS
+ตรวจ OS
 
 ```bash
 cat /etc/os-release
 ```
 
-Kernel
+ตรวจ Kernel
 
 ```bash
 uname -r
 ```
 
-Architecture
+ตรวจ Architecture
 
 ```bash
 uname -m
 ```
 
-CPU
+ตรวจ CPU
 
 ```bash
 lscpu
 ```
 
-RAM
+ตรวจ RAM
 
 ```bash
 free -h
 ```
 
-Disk
+ตรวจ Disk
 
 ```bash
 df -h
 ```
 
-Network
+ตรวจ Network
 
 ```bash
 ip addr
@@ -246,7 +274,7 @@ ip addr
 python3.12 --version
 ```
 
-ต้องได้
+ต้องเป็น
 
 ```text
 Python 3.12.x
@@ -258,13 +286,13 @@ Python 3.12.x
 STOP
 ```
 
-อย่าสร้าง venv ด้วย Python version อื่นโดยไม่ได้ Validate dependencies ใหม่
+อย่าสร้าง Production venv ด้วย Python version อื่นโดยไม่ได้ Validate Dependencies ใหม่
 
 ---
 
 # 9. นำ Project ขึ้น Server
 
-Project ต้องอยู่
+Project ต้องอยู่ที่
 
 ```text
 /opt/smart-fire-detection-v2
@@ -286,6 +314,10 @@ config.py
 camera.py
 ptz.py
 detection.py
+geometry.py
+calibration.py
+notify.py
+overlay.py
 
 requirements.txt
 preflight.py
@@ -313,9 +345,11 @@ PyTorch model
 /opt/smart-fire-detection-v2/models/fire_openvino_model/
 ```
 
-Model binaries อาจไม่อยู่ใน Git
+Model binaries อาจไม่ได้ถูกเก็บใน Git
 
-ต้องนำขึ้น Server แยกต่างหาก
+จึงต้องนำ Model ที่ถูกต้องขึ้น Production Server แยกต่างหาก
+
+ควรบันทึก Version หรือ Hash ของ Model ที่ใช้งานจริงไว้ในเอกสารการทดสอบ
 
 ---
 
@@ -344,30 +378,41 @@ Template
 deploy/production.env.example
 ```
 
-ระหว่างยังไม่ตั้ง Site
+ระหว่างยังไม่ตั้ง Site ใช้
 
 ```env
 CAMERA_LAT=nan
 CAMERA_LON=nan
 ```
 
-อย่าใช้
+ห้ามใช้
 
 ```text
-CHANGE_ME
+CAMERA_LAT=CHANGE_ME
+CAMERA_LON=CHANGE_ME
 ```
 
-กับ LAT/LON เพราะ `config.py` ต้องอ่านค่าเป็นตัวเลข
+เพราะ `config.py` อ่านสองค่านี้เป็นตัวเลข
 
 ---
 
 # 13. รัน Installer
 
+เข้า Project
+
 ```bash
 cd /opt/smart-fire-detection-v2
+```
 
+อนุญาตให้ Script ทำงาน
+
+```bash
 chmod +x deploy/install.sh
+```
 
+ติดตั้ง
+
+```bash
 sudo ./deploy/install.sh
 ```
 
@@ -382,6 +427,7 @@ Python venv
 CPU PyTorch
 Project dependencies
 OpenVINO
+Waitress
 Production environment
 Detection service
 Dashboard service
@@ -394,13 +440,15 @@ Installer ตั้งใจ
 
 ```text
 ไม่ Start main.py
-ไม่ Start app.py
+ไม่ Start Dashboard
 ไม่ Enable Services
 ไม่ทำ Calibration
 ไม่เขียนทับ production.env เดิม
 ```
 
-หลัง Installer จบ **ยังไม่เปิด Production Service**
+หลัง Installer จบ
+
+**ยังไม่เปิด Production Services**
 
 ---
 
@@ -412,13 +460,13 @@ Installer ตั้งใจ
 /etc/smart-fire-detection/production.env
 ```
 
-เปิดแก้
+แก้ด้วย
 
 ```bash
 sudo nano /etc/smart-fire-detection/production.env
 ```
 
-ค่าที่ต้องตรวจอย่างน้อย
+ตรวจค่าต่อไปนี้
 
 ```text
 CAMERA_IP
@@ -428,9 +476,11 @@ CAMERA_PWD
 
 RTSP_PORT
 RTSP_PATH
+CAMERA_ID
 
 FRAME_WIDTH
 FRAME_HEIGHT
+
 HFOV_DEG
 
 DEG_PER_SEC
@@ -454,6 +504,9 @@ SMOKE_THRESHOLD
 FRAMES_PER_SCAN
 MIN_CONFIRM_FRAMES
 FRAME_SAMPLE_GAP_SEC
+CONSENSUS_IOU_THRESHOLD
+
+STARTUP_WARMUP_RUNS
 
 CALIBRATION_DIR
 MIN_VALID_DISTANCE_M
@@ -472,43 +525,97 @@ STATIC_DIR
 DASHBOARD_WRITE_INTERVAL_SEC
 
 HEADLESS_MODE
-STARTUP_WARMUP_RUNS
 ```
 
 ---
 
-# 15. Environment Security
+# 15. CAMERA_ID
+
+`CAMERA_ID` เป็น Optional
+
+ถ้าปล่อยว่าง
+
+```env
+CAMERA_ID=
+```
+
+ระบบจะประกอบ RTSP URL จาก
+
+```text
+CAMERA_USER
+CAMERA_PWD
+CAMERA_IP
+RTSP_PORT
+RTSP_PATH
+```
+
+ถ้ากล้องใช้ RTSP URL รูปแบบพิเศษ สามารถกำหนด `CAMERA_ID` เองได้
+
+ห้าม Commit RTSP URL ที่มี Username/Password จริงเข้า Repository
+
+---
+
+# 16. Multi-frame Consensus
+
+Production Environment ต้องมี
+
+```env
+CONSENSUS_IOU_THRESHOLD=0.30
+```
+
+ค่านี้ใช้กำหนด IoU ขั้นต่ำสำหรับการจับคู่ Detection ของ Object เดียวกันระหว่างหลาย Frame
+
+Runtime baseline
+
+```text
+FRAMES_PER_SCAN=3
+MIN_CONFIRM_FRAMES=2
+CONSENSUS_IOU_THRESHOLD=0.30
+```
+
+อย่าปรับค่าเหล่านี้พร้อมกันหลายตัวโดยไม่มีผลทดสอบรองรับ
+
+---
+
+# 17. Environment Security
 
 Production environment ต้องไม่อยู่ใน Git
 
-ตรวจ Permission
+ตรวจ
 
 ```bash
 sudo ls -l /etc/smart-fire-detection/production.env
 ```
 
-ควรมี Permission จำกัด
-
-เช่น
+ควรเป็นประมาณ
 
 ```text
 root root
 0600
 ```
 
-ห้ามใช้
+ห้ามนำ Output ที่มี Password/Token ไปใส่
+
+```text
+Git
+Screenshot
+Issue
+Documentation
+Chat
+Public Log
+```
+
+หลีกเลี่ยงการใช้
 
 ```bash
 cat /etc/smart-fire-detection/production.env
 ```
 
-ใน Log หรือ Screenshot ที่อาจถูกเผยแพร่
-
-ห้ามใช้คำสั่งที่ Dump Environment ทั้งหมดโดยไม่จำเป็น
+ใน Terminal ที่กำลัง Record หรือ Capture
 
 ---
 
-# 16. Camera Credentials
+# 18. Camera Credentials
 
 ต้องแก้
 
@@ -518,9 +625,13 @@ CAMERA_USER
 CAMERA_PWD
 ```
 
-จาก Placeholder เป็นค่าจริงใน Production Environment
+จาก Placeholder เป็นค่าจริงใน
 
-ห้ามแก้เป็นค่าจริงใน
+```text
+/etc/smart-fire-detection/production.env
+```
+
+ห้ามใส่ Credential จริงใน
 
 ```text
 deploy/production.env.example
@@ -530,53 +641,93 @@ deploy/production.env.example
 
 ---
 
-# 17. Site Coordinates ระหว่าง Setup
+# 19. Site Coordinates ระหว่าง Setup
 
-ในระยะที่ Site GPS ยังไม่พร้อมสามารถใช้
+ในระหว่างที่ Site GPS ยังไม่พร้อมสามารถใช้
 
 ```env
 CAMERA_LAT=nan
 CAMERA_LON=nan
 ```
 
-เพื่อทำ Software/Hardware Test บางส่วนได้
+เพื่อทำ
 
-แต่ Full Production Validation ต้องใช้ Site coordinate จริง
+```text
+Installation
+Offline Preflight
+AI Benchmark
+Camera Test
+PTZ Test
+Frame Sync
+```
+
+บางส่วนได้
+
+แต่ก่อน Production Ready ต้องเปลี่ยนเป็น Coordinate ของ Camera Site จริง
 
 ---
 
-# 18. Manual Commissioning Shell
+# 20. Manual Commissioning Environment
 
-Production Environment เป็นไฟล์ที่ป้องกันไว้และอ่านโดย root/systemd
+Production Environment ถูกออกแบบให้ systemd โหลดโดยตรง
 
-สำหรับขั้น Commissioning แบบ Manual ให้ใช้ Root shell
-
-```bash
-sudo -i
-```
-
-จากนั้น
+ดังนั้นไม่ควรใช้
 
 ```bash
-set -a
 source /etc/smart-fire-detection/production.env
-set +a
-
-cd /opt/smart-fire-detection-v2
 ```
 
-จากนี้คำสั่ง Python ใน Commissioning section จะอ่าน Production Environment ชุดจริง
+เป็นวิธีหลัก เพราะ Bash และ systemd EnvironmentFile ไม่ได้ตีความค่าเหมือนกันทุกกรณี
 
-**อย่าแสดงค่าของ Environment ออกหน้าจอ**
+การทดสอบ Production Environment แบบ Manual ควรใช้ transient systemd service
 
-เมื่อ Commissioning เสร็จจะคืน Ownership ของ Runtime directories ก่อนเปิด systemd
+รูปแบบพื้นฐาน
+
+```bash
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    <COMMAND>
+```
+
+ตัวอย่าง Offline Preflight
+
+```bash
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/preflight.py \
+    --offline
+```
+
+ข้อดีคือ Environment ถูกอ่านด้วย systemd แบบเดียวกับ Production Service
 
 ---
 
-# 19. Offline Preflight บน Production
+# 21. Offline Preflight บน Production
+
+รัน
 
 ```bash
-./venv/bin/python preflight.py --offline
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/preflight.py \
+    --offline
 ```
 
 เป้าหมาย
@@ -585,20 +736,28 @@ cd /opt/smart-fire-detection-v2
 FAIL : 0
 ```
 
-Calibration/Camera ที่ยังไม่พร้อมสามารถ `SKIP` ตาม Offline semantics
+Calibration/Camera ที่ยังไม่พร้อมสามารถเป็น `SKIP` ตาม Offline semantics
 
 ถ้า Software-critical item FAIL ให้แก้ก่อน
 
 ---
 
-# 20. Production AI Benchmark
+# 22. Production AI Benchmark
 
-ต้อง Benchmark ใหม่บน Hardware จริง
+ต้อง Benchmark ใหม่บน Production Hardware
 
 ## PyTorch
 
 ```bash
-./venv/bin/python benchmark_inference.py \
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/benchmark_inference.py \
     --backend pt \
     --warmup 10 \
     --runs 200
@@ -606,16 +765,25 @@ Calibration/Camera ที่ยังไม่พร้อมสามารถ 
 
 ## OpenVINO
 
-ถ้ายังไม่มี Export
+ถ้ายังไม่มี OpenVINO Export
 
 ```bash
-./venv/bin/python export_openvino.py
+cd /opt/smart-fire-detection-v2
+sudo -u smartfire ./venv/bin/python export_openvino.py
 ```
 
-จากนั้น
+จากนั้น Benchmark
 
 ```bash
-./venv/bin/python benchmark_inference.py \
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/benchmark_inference.py \
     --backend openvino \
     --device intel:cpu \
     --warmup 10 \
@@ -624,28 +792,30 @@ Calibration/Camera ที่ยังไม่พร้อมสามารถ 
 
 ---
 
-# 21. เลือก Backend
+# 23. เลือก Production Backend
 
-เปรียบเทียบ
+เปรียบเทียบอย่างน้อย
 
 ```text
+Model Load
+First Warm-up
 Mean
 Median
 P95
 Maximum
-Standard deviation
+Standard Deviation
 Peak RAM
 CPU
-Warm-up
+Approx FPS
 ```
 
-อย่าดู FPS เพียงค่าเดียว
+อย่าตัดสินจาก FPS เพียงอย่างเดียว
 
 ---
 
-# 22. ตั้ง PyTorch
+# 24. PyTorch Production Configuration
 
-หากเลือก PyTorch
+ถ้าเลือก PyTorch
 
 ```env
 MODEL_BACKEND=pt
@@ -654,9 +824,9 @@ INFERENCE_DEVICE=cpu
 
 ---
 
-# 23. ตั้ง OpenVINO
+# 25. OpenVINO Production Configuration
 
-หากเลือก OpenVINO
+ถ้าเลือก OpenVINO
 
 ```env
 MODEL_BACKEND=openvino
@@ -669,20 +839,22 @@ INFERENCE_DEVICE=intel:cpu
 /etc/smart-fire-detection/production.env
 ```
 
-จากนั้น Reload Environment ใน Commissioning shell
-
-```bash
-set -a
-source /etc/smart-fire-detection/production.env
-set +a
-```
+หลังแก้แล้ว คำสั่ง `systemd-run` รอบถัดไปจะอ่านค่าชุดใหม่โดยอัตโนมัติ
 
 ---
 
-# 24. Camera Test
+# 26. Camera Test
 
 ```bash
-./venv/bin/python test_camera.py
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/test_camera.py
 ```
 
 Pass Criteria
@@ -695,34 +867,54 @@ Frame updates
 No timeout
 ```
 
-ถ้า Fail หยุดตรงนี้
+ถ้า Fail
 
----
-
-# 25. PTZ Test
-
-```bash
-./venv/bin/python test_ptz.py
+```text
+STOP
 ```
 
-ดูการหมุนจริงของ Camera
-
-ตรวจ Preset 1–9
-
-อย่าตัดสินจาก HTTP success อย่างเดียว
+อย่าไป PTZ ต่อจนกว่า Camera Test จะผ่าน
 
 ---
 
-# 26. PTZ / Frame Sync
+# 27. PTZ Test
 
 ```bash
-./venv/bin/python test_ptz_frame_sync.py
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/test_ptz.py
+```
+
+ตรวจด้วยสายตาว่ากล้องไป Preset ถูกจริง
+
+ห้ามตัดสิน PASS จาก HTTP status เพียงอย่างเดียว
+
+---
+
+# 28. PTZ / Frame Sync
+
+```bash
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/test_ptz_frame_sync.py
 ```
 
 ต้องผ่าน
 
 ```text
-PTZ
+PTZ Move
 Fresh Frame
 Stable Frame
 ```
@@ -735,7 +927,7 @@ static/sync_preset_*.jpg
 
 ---
 
-# 27. Intrinsics
+# 29. Camera Intrinsics
 
 ต้องมี
 
@@ -743,9 +935,19 @@ static/sync_preset_*.jpg
 calibration/camera_intrinsics.json
 ```
 
-หาก Camera/Lens/Zoom/Crop/Resolution เดียวกับชุดที่ Calibration แล้ว สามารถใช้ Calibration เดิมที่ผ่าน Validation ได้
+ถ้า Production ใช้
 
-ถ้า Geometry เปลี่ยน
+```text
+Camera เดิม
+Lens เดิม
+Optical Zoom เดิม
+Digital Crop เดิม
+Resolution เดิม
+```
+
+สามารถใช้ Calibration ที่ผ่าน Validation แล้วได้
+
+ถ้าปัจจัยใดเปลี่ยน
 
 ```text
 ต้อง Calibration ใหม่
@@ -753,19 +955,19 @@ calibration/camera_intrinsics.json
 
 ---
 
-# 28. Intrinsics บน Headless Server
+# 30. Intrinsics บน Headless Server
 
 `calibrate_intrinsics.py capture` ใช้ GUI
 
-ดังนั้นทางเลือกที่สะดวกคือทำ Intrinsics Capture บน Development Computer ด้วย Camera configuration เดียวกัน แล้วนำ
+ดังนั้น Workflow ที่สะดวกคือทำ Capture บน Development Computer แล้วนำ
 
 ```text
-camera_intrinsics.json
+calibration/camera_intrinsics.json
 ```
 
-ไป Production
+มา Production
 
-เงื่อนไขคือ
+เงื่อนไขสำคัญคือ
 
 ```text
 Camera
@@ -773,29 +975,30 @@ Lens
 Zoom
 Crop
 Resolution
+Image Pipeline
 ```
 
-ต้องเหมือนกัน
+ต้องตรงกัน
 
 ---
 
-# 29. HFOV
+# 31. HFOV
 
-Production
+Production Environment ต้องใช้
 
 ```env
 HFOV_DEG=<CALIBRATED_VALUE>
 ```
 
-ต้องตรงกับ Intrinsics
+HFOV ต้องตรงกับ Intrinsics Calibration
 
-อย่าใช้ค่าเก่าหลังเปลี่ยน Camera Geometry
+หาก Camera Geometry เปลี่ยน ห้ามใช้ค่าเดิมโดยไม่ตรวจ
 
 ---
 
-# 30. Site GPS
+# 32. Site GPS
 
-เมื่อทราบตำแหน่งติดตั้งจริง
+เมื่อทราบตำแหน่งติดตั้งจริงแล้ว
 
 แก้
 
@@ -812,22 +1015,22 @@ CAMERA_LON
 
 ห้าม Commit Coordinate จริงเข้า Public Repository
 
-Reload
-
-```bash
-set -a
-source /etc/smart-fire-detection/production.env
-set +a
-```
-
 ---
 
-# 31. Bearing Calibration
+# 33. Bearing Calibration
 
-เมื่อติด Camera ในตำแหน่งและ Orientation สุดท้ายแล้ว
+ทำหลังติด Camera ในตำแหน่งและ Orientation สุดท้ายแล้ว
 
 ```bash
-./venv/bin/python calibrate_bearing.py
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/calibrate_bearing.py
 ```
 
 Output
@@ -844,13 +1047,19 @@ calibration/site.json
 
 ---
 
-# 32. Bearing Verification
+# 34. Bearing Verification
 
 ```bash
-./venv/bin/python verify_bearing.py
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/verify_bearing.py
 ```
-
-ใช้ Reference directions ที่เหมาะสม
 
 บันทึก
 
@@ -864,28 +1073,36 @@ Max Error
 
 ---
 
-# 33. Distance Calibration
+# 35. Distance Calibration
 
 ```bash
-./venv/bin/python calibrate_distance.py
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/calibrate_distance.py
 ```
 
-จำนวน
+จำนวน Reference Points
 
 ```text
-ขั้นต่ำ 3
-แนะนำ 5–8
+ขั้นต่ำ 3 จุด
+แนะนำ 5–8 จุด
 ```
 
-ใช้ Reference object ธรรมดา
+ใช้วัตถุอ้างอิงธรรมดา
 
-ใช้
+ใช้ตำแหน่ง
 
 ```text
 Bottom ground-contact Y
 ```
 
-ไม่ใช้ Bounding Box center
+ไม่ใช้ Bounding Box Center
 
 Output
 
@@ -895,12 +1112,20 @@ calibration/distance_global.json
 
 ---
 
-# 34. Distance Verification
+# 36. Distance Verification
 
-ใช้ Test distances ที่ไม่ใช่ Calibration points
+ใช้ Test Distances ที่ไม่ใช่ Calibration Points
 
 ```bash
-./venv/bin/python verify_distance.py
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/verify_distance.py
 ```
 
 บันทึก
@@ -921,13 +1146,13 @@ Ground plane
 Calibration point distribution
 ```
 
-ก่อน Full Production
+ก่อน Full Production Validation
 
 ---
 
-# 35. AI Validation
+# 37. AI Validation
 
-AI Positive Test สามารถใช้
+Positive Fire/Smoke tests ใช้ได้จาก
 
 ```text
 Public Dataset
@@ -937,39 +1162,53 @@ Recorded Media
 Screen Playback
 ```
 
-ไม่จำเป็นต้องสร้างเหตุการณ์อันตรายจริง
+ไม่จำเป็นต้องสร้างเหตุการณ์จริงเพื่อทดสอบระบบ
 
 ---
 
-# 36. Telegram
+# 38. Telegram
 
-ถ้าใช้ Telegram
-
-ตั้ง
+ถ้าใช้ Telegram ต้องกำหนด
 
 ```text
 TELEGRAM_TOKEN
 TELEGRAM_CHAT_ID
 ```
 
-แล้ว
+ใน Production Environment
+
+ทดสอบ
 
 ```bash
-./venv/bin/python test_telegram.py
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/test_telegram.py
 ```
 
-ตรวจว่า Notification ถึงปลายทาง
-
-หากไม่ใช้ Telegram สามารถปล่อย Disabled ได้ตาม Deployment scope
+หาก Deployment ไม่ใช้ Telegram สามารถข้ามตาม Scope ได้
 
 ---
 
-# 37. Full Preflight
+# 39. Full Preflight
 
-หลัง Environment/Hardware/Calibration พร้อม
+เมื่อ Environment, Hardware และ Calibration พร้อมแล้ว
 
 ```bash
-./venv/bin/python preflight.py
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/preflight.py
 ```
 
 เป้าหมาย
@@ -984,20 +1223,29 @@ FAIL : 0
 
 ---
 
-# 38. Full Sweep
+# 40. Full Sweep
 
 ```bash
-./venv/bin/python test_full_sweep.py --cycles 1
+sudo systemd-run \
+    --wait \
+    --pipe \
+    --collect \
+    --uid=smartfire \
+    --property=WorkingDirectory=/opt/smart-fire-detection-v2 \
+    --property=EnvironmentFile=/etc/smart-fire-detection/production.env \
+    /opt/smart-fire-detection-v2/venv/bin/python \
+    /opt/smart-fire-detection-v2/test_full_sweep.py \
+    --cycles 1
 ```
 
-ตรวจ
+ตรวจ Pipeline
 
 ```text
 PTZ
  ↓
-Fresh
+Fresh Frame
  ↓
-Stable
+Stable Frame
  ↓
 AI
  ↓
@@ -1022,10 +1270,10 @@ static/sweep_runs/
 
 ---
 
-# 39. ตรวจ Runtime Outputs
+# 41. ตรวจ Runtime Outputs
 
 ```bash
-ls -lah static/
+ls -lah /opt/smart-fire-detection-v2/static/
 ```
 
 อาจมี
@@ -1034,6 +1282,7 @@ ls -lah static/
 latest_frame.jpg
 latest_alert.jpg
 status.json
+
 alert_spool/
 benchmark_runs/
 detection_runs/
@@ -1042,33 +1291,37 @@ sweep_runs/
 
 ---
 
-# 40. คืน Ownership ก่อน systemd
+# 42. ตรวจ Runtime Permissions
 
-ถ้าช่วง Commissioning รัน Python จาก Root shell ให้คืน Runtime directories
+ตรวจ
 
 ```bash
-chown -R smartfire:smartfire \
+sudo ls -ld \
     /opt/smart-fire-detection-v2/static \
     /opt/smart-fire-detection-v2/calibration
 ```
 
-จากนั้น
+Runtime user ต้องสามารถเขียนสอง Directory นี้ได้
+
+หากจำเป็น
 
 ```bash
-exit
+sudo chown -R smartfire:smartfire \
+    /opt/smart-fire-detection-v2/static \
+    /opt/smart-fire-detection-v2/calibration
 ```
-
-ตอนนี้กลับมา User shell ปกติ
 
 ---
 
-# 41. ตรวจ systemd Units
+# 43. ตรวจ systemd Units
+
+Reload
 
 ```bash
 sudo systemctl daemon-reload
 ```
 
-ถ้ามี `systemd-analyze`
+ตรวจ Unit files
 
 ```bash
 sudo systemd-analyze verify \
@@ -1076,21 +1329,82 @@ sudo systemd-analyze verify \
     /etc/systemd/system/smart-fire-dashboard.service
 ```
 
-แก้ Error ก่อน Enable
+ถ้ามี Error ให้แก้ก่อน Enable
 
 ---
 
-# 42. Enable Detection Service
+# 44. Dashboard Production Server
+
+บน Development Computer สามารถใช้
+
+```bash
+python app.py
+```
+
+ได้
+
+คำสั่งนี้ใช้ Flask Development Server และมีไว้สำหรับ Local Development/Test
+
+Production **ไม่เรียก `python app.py` โดยตรง**
+
+Production ใช้
+
+```text
+Waitress
+```
+
+เป็น WSGI Server
+
+Architecture
+
+```text
+smart-fire-dashboard.service
+            ↓
+      waitress-serve
+            ↓
+          app:app
+            ↓
+      Web Dashboard
+```
+
+Production command
+
+```bash
+/opt/smart-fire-detection-v2/venv/bin/waitress-serve \
+    --host=0.0.0.0 \
+    --port=5000 \
+    app:app
+```
+
+ตรวจ Waitress
+
+```bash
+/opt/smart-fire-detection-v2/venv/bin/waitress-serve --help
+```
+
+ตรวจ Python import
+
+```bash
+/opt/smart-fire-detection-v2/venv/bin/python \
+    -c "import waitress; print('waitress OK')"
+```
+
+---
+
+# 45. Enable Detection Service
 
 ทำเมื่อ
 
 ```text
 Full Preflight PASS
 Full Sweep PASS
-Calibration/Verification accepted
+Calibration accepted
+Verification accepted
 ```
 
 แล้วเท่านั้น
+
+Enable
 
 ```bash
 sudo systemctl enable smart-fire-detection.service
@@ -1116,7 +1430,30 @@ active (running)
 
 ---
 
-# 43. Enable Dashboard Service
+# 46. ตรวจ Detection Service Log
+
+```bash
+sudo journalctl \
+    -u smart-fire-detection.service \
+    -n 100 \
+    --no-pager
+```
+
+Live
+
+```bash
+sudo journalctl \
+    -u smart-fire-detection.service \
+    -f
+```
+
+ต้องไม่มี Crash loop หรือ Error ต่อเนื่อง
+
+---
+
+# 47. Enable Dashboard Service
+
+Enable
 
 ```bash
 sudo systemctl enable smart-fire-dashboard.service
@@ -1142,13 +1479,55 @@ active (running)
 
 ---
 
-# 44. Service Relationship
+# 48. ตรวจ Dashboard Runtime
 
-Dashboard unit มี Ordering หลัง Detection Service
+ตรวจ Process
 
-แต่ไม่ได้บังคับให้ Detection ต้อง Active ตลอดเพื่อให้ Dashboard process อยู่
+```bash
+ps -ef | grep '[w]aitress-serve'
+```
 
-Architecture จึงเป็น
+ต้องพบ Waitress Process
+
+ตรวจ API จาก Server เอง
+
+```bash
+curl -f http://127.0.0.1:5000/api/status
+```
+
+Expected
+
+```text
+HTTP request success
+JSON response
+```
+
+หาก Service Active แต่ API ไม่ตอบ ให้ตรวจ Dashboard Log
+
+---
+
+# 49. Dashboard Logs
+
+```bash
+sudo journalctl \
+    -u smart-fire-dashboard.service \
+    -n 100 \
+    --no-pager
+```
+
+Live
+
+```bash
+sudo journalctl \
+    -u smart-fire-dashboard.service \
+    -f
+```
+
+---
+
+# 50. Service Relationship
+
+Detection และ Dashboard เป็นคนละ Process
 
 ```text
 Detection failure
@@ -1157,66 +1536,26 @@ Dashboard process ต้องถูก kill
 
 Dashboard failure
 ≠
-Detection ต้องหยุด
+Detection Runtime ต้องหยุด
 ```
+
+Dashboard มี Ordering หลัง Detection Service แต่ไม่ควรถูกผูกจน Runtime หลักล้มตาม Dashboard
 
 ---
 
-# 45. Detection Logs
+# 51. Dashboard Access
 
-ล่าสุด
-
-```bash
-sudo journalctl \
-    -u smart-fire-detection.service \
-    -n 100 \
-    --no-pager
-```
-
-Live
-
-```bash
-sudo journalctl \
-    -u smart-fire-detection.service \
-    -f
-```
-
----
-
-# 46. Dashboard Logs
-
-ล่าสุด
-
-```bash
-sudo journalctl \
-    -u smart-fire-dashboard.service \
-    -n 100 \
-    --no-pager
-```
-
-Live
-
-```bash
-sudo journalctl \
-    -u smart-fire-dashboard.service \
-    -f
-```
-
----
-
-# 47. Dashboard Access
-
-ภายใน Network ที่อนุญาต
+จากเครื่องภายใน Network ที่ได้รับอนุญาต
 
 ```text
 http://<SERVER-IP>:5000
 ```
 
-ตรวจ
+Dashboard แสดง
 
 ```text
-Latest frame
-Last alert
+Latest Frame
+Last Alert
 Status
 ```
 
@@ -1228,21 +1567,31 @@ http://<SERVER-IP>:5000/api/status
 
 ---
 
-# 48. Dashboard Security
+# 52. Dashboard Security
 
 Dashboard ปัจจุบันไม่มี Authentication
 
 ดังนั้น
 
 ```text
-อย่าเปิด Port 5000 ออก Internet โดยตรง
+ห้ามเปิด Port 5000 ออก Public Internet โดยตรง
 ```
 
-ให้ใช้ใน Trusted/Internal Network จนกว่าจะเพิ่ม Security layer ที่เหมาะสม
+ให้ใช้งานใน
+
+```text
+Trusted LAN
+Private Network
+Controlled Network
+```
+
+ก่อน
+
+หากต้องเปิดจากภายนอก ควรเพิ่ม Security Layer ที่เหมาะสมก่อน
 
 ---
 
-# 49. Reboot Test
+# 53. Reboot Test
 
 หลังทั้งสอง Service ทำงานถูกต้อง
 
@@ -1250,32 +1599,36 @@ Dashboard ปัจจุบันไม่มี Authentication
 sudo reboot
 ```
 
-หลัง Server กลับมา
+เมื่อ Server กลับมา
 
 ```bash
 systemctl is-active smart-fire-detection.service
 systemctl is-active smart-fire-dashboard.service
 ```
 
-ต้องได้
+Expected
 
 ```text
 active
 active
 ```
 
-จากนั้นตรวจ
+ตรวจเพิ่มเติม
 
 ```bash
 sudo systemctl status smart-fire-detection.service
 sudo systemctl status smart-fire-dashboard.service
 ```
 
-และเปิด Dashboard
+ตรวจ Dashboard
+
+```bash
+curl -f http://127.0.0.1:5000/api/status
+```
 
 ---
 
-# 50. คำสั่งใช้งานประจำวัน
+# 54. Production Daily Operations
 
 ## Detection Start
 
@@ -1315,16 +1668,23 @@ sudo systemctl restart smart-fire-dashboard.service
 
 ---
 
-# 51. ตรวจ Services พร้อมกัน
+# 55. ตรวจ Services พร้อมกัน
 
 ```bash
 systemctl is-active smart-fire-detection.service
 systemctl is-active smart-fire-dashboard.service
 ```
 
+Expected
+
+```text
+active
+active
+```
+
 ---
 
-# 52. ห้ามรัน Runtime ซ้อน
+# 56. ห้ามรัน Runtime ซ้อน
 
 ถ้า
 
@@ -1338,7 +1698,7 @@ systemctl is-active smart-fire-detection.service
 active
 ```
 
-ห้ามรัน
+ห้ามเปิด
 
 ```bash
 python main.py
@@ -1346,11 +1706,11 @@ python main.py
 
 อีก Process
 
-เพราะจะเกิด Runtime สองชุดพยายามใช้ Camera/PTZ เดียวกัน
+เพราะจะเกิด Runtime สองชุดพยายามใช้ Camera และ PTZ เดียวกัน
 
 ---
 
-# 53. Manual Debug
+# 57. Manual Debug
 
 ก่อน Manual Debug
 
@@ -1359,9 +1719,9 @@ sudo systemctl stop smart-fire-dashboard.service
 sudo systemctl stop smart-fire-detection.service
 ```
 
-จากนั้นใช้ Commissioning shell ตามขั้นตอนเดิม
+จากนั้นใช้ `systemd-run` สำหรับ Test ที่ต้องการ Production Environment
 
-เมื่อเสร็จ
+เมื่อ Debug เสร็จ
 
 ```bash
 sudo systemctl start smart-fire-detection.service
@@ -1370,7 +1730,7 @@ sudo systemctl start smart-fire-dashboard.service
 
 ---
 
-# 54. Troubleshooting Detection Service
+# 58. Troubleshooting Detection Service
 
 ตรวจตามลำดับ
 
@@ -1383,35 +1743,53 @@ sudo systemctl start smart-fire-dashboard.service
 6. Model path
 7. File permissions
 8. Camera network
-9. Calibration files
-10. preflight.py
-11. test_camera.py
-12. test_ptz_frame_sync.py
+9. RTSP
+10. PTZ
+11. Calibration files
+12. preflight.py
+13. test_camera.py
+14. test_ptz.py
+15. test_ptz_frame_sync.py
+16. test_full_sweep.py
 ```
 
-อย่าเปลี่ยนหลายค่าในเวลาเดียวกัน
+อย่าเปลี่ยนหลายค่าในครั้งเดียว
 
 ---
 
-# 55. Troubleshooting Dashboard
+# 59. Troubleshooting Dashboard
 
-ตรวจ
+ตรวจตามลำดับ
 
 ```text
-1. systemctl status smart-fire-dashboard
+1. systemctl status smart-fire-dashboard.service
 2. journalctl
-3. app.py
-4. Flask dependency
-5. STATIC_DIR
-6. status.json
-7. latest_frame.jpg
-8. Port 5000
-9. Network/firewall
+3. waitress-serve
+4. Waitress package
+5. app.py
+6. Flask dependency
+7. STATIC_DIR
+8. status.json
+9. latest_frame.jpg
+10. Port 5000
+11. Network / Firewall
+```
+
+ตรวจ Waitress
+
+```bash
+/opt/smart-fire-detection-v2/venv/bin/waitress-serve --help
+```
+
+ตรวจ Local API
+
+```bash
+curl -v http://127.0.0.1:5000/api/status
 ```
 
 ---
 
-# 56. Production Backup
+# 60. Production Backup
 
 ก่อน Update ควร Backup อย่างน้อย
 
@@ -1423,13 +1801,13 @@ calibration/site.json
 calibration/distance_global.json
 ```
 
-รวม Calibration files อื่นที่ใช้งานจริง
+รวม Calibration files อื่นที่ Runtime ใช้งานจริง
 
-Model ที่ใช้ Production ก็ควรมีสำเนาที่ระบุ Version ได้
+Model ที่ Production ใช้ก็ควรมีสำเนาที่ระบุ Version ได้
 
 ---
 
-# 57. Update Source Code
+# 61. Update Source Code
 
 ก่อน Update
 
@@ -1444,20 +1822,29 @@ Backup ก่อน
 
 ---
 
-# 58. หลัง Update
+# 62. หลัง Update
 
-รัน Installer อีกครั้งได้
+รัน Installer อีกครั้ง
 
 ```bash
 cd /opt/smart-fire-detection-v2
 sudo ./deploy/install.sh
 ```
 
-Installer ไม่ควรเขียนทับ Production Environment หรือ Site Calibration เดิมโดยไม่ตั้งใจ
+Installer ไม่ควรเขียนทับ
+
+```text
+Production Environment
+Site Calibration
+Distance Calibration
+Intrinsics
+```
+
+เดิมโดยไม่ตั้งใจ
 
 ---
 
-# 59. Regression Test หลัง Update
+# 63. Regression Test หลัง Update
 
 อย่างน้อย
 
@@ -1479,18 +1866,18 @@ Dashboard Service
 
 ---
 
-# 60. Restart หลัง Update
+# 64. Restart หลัง Update
 
 ```bash
 sudo systemctl start smart-fire-detection.service
 sudo systemctl start smart-fire-dashboard.service
 ```
 
-ดู Logs ทั้งสอง
+ตรวจ Logs ทั้งสอง Service
 
 ---
 
-# 61. เมื่อเปลี่ยน AI Model
+# 65. เมื่อเปลี่ยน AI Model
 
 ต้องทำ
 
@@ -1510,21 +1897,21 @@ Full Sweep
 Production
 ```
 
-อย่าสมมติ Model ใหม่มี Accuracy/Performance เหมือนเดิม
+ห้ามสมมติว่า Model ใหม่มี Accuracy หรือ Performance เหมือนเดิม
 
 ---
 
-# 62. เมื่อเปลี่ยน Backend
+# 66. เมื่อเปลี่ยน Backend
 
 ตัวอย่าง
 
 ```text
 PyTorch
- ↓
+   ↓
 OpenVINO
 ```
 
-ทำใหม่
+ต้องทำใหม่อย่างน้อย
 
 ```text
 Benchmark
@@ -1535,7 +1922,7 @@ Full Sweep
 
 ---
 
-# 63. เมื่อเปลี่ยน Camera
+# 67. เมื่อเปลี่ยน Camera
 
 ตรวจใหม่
 
@@ -1548,12 +1935,13 @@ HFOV
 Bearing
 Distance
 Verification
+Full Preflight
 Full Sweep
 ```
 
 ---
 
-# 64. เมื่อเปลี่ยน Lens/Zoom/Crop/Resolution
+# 68. เมื่อเปลี่ยน Lens / Zoom / Crop / Resolution
 
 อย่างน้อย
 
@@ -1565,18 +1953,31 @@ Distance Verification
 Full Sweep
 ```
 
-และ Calibration ใหม่เมื่อ Geometry ไม่ตรงชุดเดิม
+หาก Geometry เปลี่ยนจาก Calibration เดิม ต้องทำ Calibration ใหม่
 
 ---
 
-# 65. เมื่อย้าย Site
+# 69. เมื่อเปลี่ยน Orientation
+
+ต้องทำอย่างน้อย
+
+```text
+Bearing Calibration
+Bearing Verification
+Full Preflight
+Full Sweep
+```
+
+---
+
+# 70. เมื่อย้าย Site
 
 ห้ามใช้ Site Calibration เดิมทันที
 
 ต้องทำ
 
 ```text
-Production coordinate
+Production Coordinate
 Bearing Calibration
 Distance Calibration
 Bearing Verification
@@ -1587,27 +1988,34 @@ Full Sweep
 
 ---
 
-# 66. Production Security Checklist
+# 71. Production Security Checklist
 
 ```text
 [ ] ไม่มี Camera Password ใน Git
 [ ] ไม่มี Telegram Token ใน Git
+[ ] ไม่มี Telegram Chat ID จริงใน Git
 [ ] ไม่มี production.env ใน Git
 [ ] ไม่มี Site GPS จริงใน Public Repository
+
 [ ] production.env permission ถูกจำกัด
 [ ] Services รันด้วย smartfire
-[ ] Dashboard ไม่ถูก expose Public Internet โดยตรง
+
+[ ] Dashboard ใช้ Waitress
+[ ] Dashboard ไม่ใช้ Flask Development Server ใน Production
+[ ] Dashboard ไม่ถูกเปิด Public Internet โดยตรง
+
 [ ] Model source/version ถูกบันทึก
 [ ] Calibration version ถูกบันทึก
 ```
 
 ---
 
-# 67. Production Acceptance Checklist
+# 72. Production Acceptance Checklist
 
 ```text
 [ ] Debian/Systemd พร้อม
 [ ] Python 3.12 พร้อม
+
 [ ] Project อยู่ /opt/smart-fire-detection-v2
 
 [ ] install.sh ผ่าน
@@ -1630,9 +2038,11 @@ Full Sweep
 [ ] Intrinsics valid
 [ ] HFOV ตรง
 
-[ ] Site coordinate ถูกต้อง
+[ ] Site Coordinate ถูกต้อง
+
 [ ] Bearing Calibration PASS
 [ ] Bearing Verification accepted
+
 [ ] Distance Calibration PASS
 [ ] Distance Verification accepted
 
@@ -1649,6 +2059,9 @@ Full Sweep
 [ ] Detection Restart PASS
 [ ] Dashboard Restart PASS
 
+[ ] Dashboard รันผ่าน Waitress
+[ ] /api/status ตอบกลับ
+
 [ ] journalctl ไม่มี Error ต่อเนื่อง
 
 [ ] Reboot Test PASS
@@ -1660,7 +2073,7 @@ Full Sweep
 
 ---
 
-# 68. Production Ready
+# 73. Production Ready
 
 ให้ใช้สถานะ
 
@@ -1668,7 +2081,7 @@ Full Sweep
 Production Ready
 ```
 
-เมื่อ Checklist ด้านบนผ่านครบตาม Deployment scope เท่านั้น
+เมื่อ Production Acceptance Checklist ผ่านครบตาม Deployment Scope เท่านั้น
 
 การที่
 
@@ -1679,14 +2092,54 @@ main.py เปิดได้
 หรือ
 
 ```text
-AI ตรวจพบ object ได้
+AI ตรวจพบ Object ได้
 ```
 
 เพียงอย่างเดียวไม่เพียงพอ
 
 ---
 
-# 69. Final Production Principle
+# 74. Production Runtime Summary
+
+```text
+Camera
+   ↓
+RTSP
+   ↓
+PTZ Step Scan
+   ↓
+Fresh Frame
+   ↓
+Stable Frame
+   ↓
+AI
+   ↓
+Multi-frame Consensus
+   ↓
+Bearing / Distance / GPS
+   ↓
+Alert / Telegram / Static Output
+   ↓
+Dashboard
+```
+
+Production Processes
+
+```text
+smart-fire-detection.service
+        ↓
+      main.py
+
+smart-fire-dashboard.service
+        ↓
+   waitress-serve
+        ↓
+      app:app
+```
+
+---
+
+# 75. Final Production Principle
 
 ```text
 Development
@@ -1707,6 +2160,8 @@ Full Sweep
      ↓
 systemd
      ↓
+Service Validation
+     ↓
 Reboot Test
      ↓
 Production Ready
@@ -1720,3 +2175,25 @@ Production Ready
 ย้อนกลับไป Test Layer ก่อนหน้า
 วัดผลก่อนและหลังทุกการเปลี่ยนแปลง
 ```
+
+---
+
+# 76. Related Documentation
+
+เอกสารหลักของ Repository
+
+```text
+README.md
+= Project Overview / Quick Start
+
+DEVELOPER_GUIDE.md
+= Source Architecture / Developer Workflow
+
+TESTING.md
+= Testing Procedure / Release Gate
+
+PRODUCTION_DEPLOYMENT_GUIDE.md
+= Installation / Commissioning / Production Operations
+```
+
+เอกสารทั้ง 4 ไฟล์ต้องถูก Update พร้อมกันเมื่อ Architecture หรือ Production Workflow เปลี่ยน
