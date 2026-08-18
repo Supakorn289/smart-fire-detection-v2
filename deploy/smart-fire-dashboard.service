@@ -1,0 +1,71 @@
+[Unit]
+Description=Smart Fire Detection v2 Dashboard
+Documentation=Smart Fire Detection v2 Web Dashboard
+
+Wants=network-online.target
+After=network-online.target
+
+# Dashboard อ่านไฟล์ที่ main.py สร้าง
+# แต่ไม่บังคับว่า Detection service ต้อง Online ตลอด
+After=smart-fire-detection.service
+
+
+[Service]
+Type=simple
+
+# ============================================================
+# Runtime user
+# ============================================================
+
+User=smartfire
+Group=smartfire
+
+
+# ============================================================
+# Project directory
+# ============================================================
+
+WorkingDirectory=/opt/smart-fire-detection-v2
+
+
+# ============================================================
+# Production configuration
+# ============================================================
+
+EnvironmentFile=/etc/smart-fire-detection/production.env
+
+Environment=PYTHONUNBUFFERED=1
+
+
+# ============================================================
+# Dashboard application
+# ============================================================
+
+ExecStart=/opt/smart-fire-detection-v2/venv/bin/python /opt/smart-fire-detection-v2/app.py
+
+
+# ============================================================
+# Restart policy
+# ============================================================
+
+Restart=on-failure
+RestartSec=5
+
+
+# ============================================================
+# Shutdown
+# ============================================================
+
+TimeoutStopSec=10
+
+
+# ============================================================
+# Basic security
+# ============================================================
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+
+[Install]
+WantedBy=multi-user.target
