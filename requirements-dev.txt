@@ -3,15 +3,18 @@
 # Development / Testing Dependencies
 # ============================================================
 #
-# ไฟล์นี้ใช้สำหรับ:
+# Purpose:
 #
 # - Development environment
 # - Unit testing
 # - Local verification
-# - CI testing ในอนาคต
+# - Future CI testing
 #
-# Production Runtime ไม่จำเป็นต้องติดตั้งไฟล์นี้
-# ให้ใช้ requirements.txt สำหรับ Production
+# Production Runtime:
+#
+# - DO NOT install this file unless development/test tools
+#   are required on the production machine.
+# - Production dependencies are defined in requirements.txt.
 #
 # ============================================================
 
@@ -20,10 +23,10 @@
 # Runtime Dependencies
 # ============================================================
 #
-# โหลด dependency หลักจาก requirements.txt
+# Install the same runtime dependency set used by Production.
 #
-# ทำให้ Development environment มี package
-# เหมือน Production Runtime ก่อน
+# This keeps Development and Production environments aligned
+# before Development/Test-only packages are installed.
 #
 # ============================================================
 
@@ -33,22 +36,10 @@
 # ============================================================
 # Unit Testing
 # ============================================================
+#
+# pytest is pinned to make Development / CI test behavior
+# reproducible across machines.
+#
+# ============================================================
 
 pytest==9.1.1
-จากนี้เครื่อง Development ใหม่ติดตั้งได้ด้วย:
-
-python -m pip install -r requirements-dev.txt
-
-แล้วทดสอบ:
-
-python -m pytest -q
-
-ผลปัจจุบันที่ควรได้คือ:
-
-24 passed
-
-ส่วน Production ยังใช้:
-
-python -m pip install -r requirements.txt
-
-ไม่ต้องติดตั้ง requirements-dev.txt ครับ.

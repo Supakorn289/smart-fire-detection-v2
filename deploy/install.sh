@@ -1,178 +1,98 @@
 #!/usr/bin/env bash
-# deploy/install.sh
 
 set -Eeuo pipefail
-
+IFS=$'\n\t'
 
 # ============================================================
 # Smart Fire Detection v2
 # Production Installer
 # ============================================================
 #
-# หน้าที่:
+# Target:
+#   Debian 13
+#   Python 3.12
 #
-# - ตรวจสอบว่าอยู่บน Linux / Debian
-# - ตรวจสอบ Python 3.12
-# - ตรวจสอบโครงสร้าง Project
-# - ป้องกันการติดตั้งทับขณะ Service กำลังทำงาน
-# - สร้าง system user/group: smartfire
-# - เตรียม Runtime directories
-# - สร้าง Python virtual environment
-# - ติดตั้ง CPU-only PyTorch
-# - ติดตั้ง Project dependencies
-# - ติดตั้ง OpenVINO
-# - ตรวจสอบ Python imports
-# - สร้าง Production environment file
-# - ติดตั้ง Detection systemd service
-# - ติดตั้ง Dashboard systemd service
-# - ตรวจสอบ AI Model
-# - ตรวจสอบ Calibration files
-# - กำหนด Runtime permissions
+# This installer prepares the production environment.
 #
+# It intentionally DOES NOT:
 #
-# สิ่งที่ไฟล์นี้จะ "ไม่" ทำ:
-#
-# - ไม่ Start main.py
-# - ไม่ Start app.py
-# - ไม่ Enable systemd services อัตโนมัติ
-# - ไม่ทำ Camera Calibration
-# - ไม่ทำ Bearing Calibration
-# - ไม่ทำ Distance Calibration
-# - ไม่เขียนทับ production.env เดิม
-# - ไม่เขียนทับ Site configuration
-# - ไม่สร้างหรือแก้ Camera credentials
+#   - start main.py
+#   - start app.py
+#   - start systemd services
+#   - enable systemd services
+#   - perform calibration
+#   - overwrite an existing production.env
 #
 # ============================================================
 
 
 # ============================================================
-# Constants
+# Configuration
 # ============================================================
 
 PROJECT_DIR="/opt/smart-fire-detection-v2"
-
-SERVICE_USER="smartfire"
-SERVICE_GROUP="smartfire"
-
-CONFIG_DIR="/etc/smart-fire-detection"
-ENV_FILE="${CONFIG_DIR}/production.env"
-
-
-# ============================================================
-# Detection service
-# ============================================================
-
-SERVICE_NAME="smart-fire-detection.service"
-
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
-
-SOURCE_SERVICE_FILE="${PROJECT_DIR}/deploy/${SERVICE_NAME}"
-
-
-# ============================================================
-# Dashboard service
-# ============================================================
-
-DASHBOARD_SERVICE_NAME="smart-fire-dashboard.service"
-
-DASHBOARD_SERVICE_FILE="/etc/systemd/system/${DASHBOARD_SERVICE_NAME}"
-
-SOURCE_DASHBOARD_SERVICE_FILE="${PROJECT_DIR}/deploy/${DASHBOARD_SERVICE_NAME}"
-
-
-# ============================================================
-# Python
-# ============================================================
-
-PYTHON_BIN="${PYTHON_BIN:-python3.12}"
+DEPLOY_DIR="${PROJECT_DIR}/deploy"
 
 VENV_DIR="${PROJECT_DIR}/venv"
 
-VENV_PYTHON="${VENV_DIR}/bin/python"
+ENV_DIR="/etc/smart-fire-detection"
+ENV_FILE="${ENV_DIR}/production.env"
+
+SYSTEMD_DIR="/etc/systemd/system"
+
+DETECTION_UNIT="smart-fire-detection.service"
+DASHBOARD_UNIT="smart-fire-dashboard.service"
+
+RUNTIME_USER="smartfire"
+RUNTIME_GROUP="smartfire"
+
+PYTHON_BIN="${PYTHON_BIN:-python3.12}"
+
+# OpenVINO is optional on Debian 13.
+#
+# Default:
+#   INSTALL_OPENVINO=0
+#
+# To request installation later:
+#
+#   sudo env INSTALL_OPENVINO=1 ./deploy/install.sh
+#
+INSTALL_OPENVINO="${INSTALL_OPENVINO:-0}"
 
 
 # ============================================================
-# Models
+# Logging
 # ============================================================
 
-MODEL_PT="${PROJECT_DIR}/models/fire.pt"
-
-MODEL_OV="${PROJECT_DIR}/models/fire_openvino_model"
-
-
-# ============================================================
-# Calibration
-# ============================================================
-
-INTRINSICS_FILE="${PROJECT_DIR}/calibration/camera_intrinsics.json"
-
-SITE_FILE="${PROJECT_DIR}/calibration/site.json"
-
-DISTANCE_FILE="${PROJECT_DIR}/calibration/distance_global.json"
-
-
-# ============================================================
-# Helper functions
-# ============================================================
-
-info() {
-
-    echo
-    echo "============================================================"
-    echo "$1"
-    echo "============================================================"
-
+log() {
+    printf '\n[INFO] %s\n' "$*"
 }
-
 
 ok() {
-
-    echo "[OK] $1"
-
+    printf '[ OK ] %s\n' "$*"
 }
-
 
 warn() {
-
-    echo "[WARN] $1"
-
+    printf '[WARN] %s\n' "$*" >&2
 }
-
 
 fail() {
-
-    echo
-    echo "[ERROR] $1"
-    echo
-
+    printf '[FAIL] %s\n' "$*" >&2
     exit 1
-
 }
 
 
-# ============================================================
-# Error handler
-# ============================================================
-
 on_error() {
-
     local exit_code=$?
     local line_no=$1
 
-    echo
-    echo "============================================================"
-    echo "[ERROR] Installation failed"
-    echo "============================================================"
-    echo "Line      : ${line_no}"
-    echo "Exit code : ${exit_code}"
-    echo
-    echo "แก้ปัญหาแล้วสามารถรัน Installer ใหม่ได้"
-    echo "Installer ถูกออกแบบให้รองรับการรันซ้ำ"
-    echo "============================================================"
+    printf '\n[FAIL] Installer stopped at line %s (exit=%s)\n' \
+        "${line_no}" \
+        "${exit_code}" \
+        >&2
 
     exit "${exit_code}"
 }
-
 
 trap 'on_error ${LINENO}' ERR
 
@@ -182,734 +102,611 @@ trap 'on_error ${LINENO}' ERR
 # ============================================================
 
 if [[ "${EUID}" -ne 0 ]]; then
-
-    fail "
-กรุณารันด้วย sudo:
-
-sudo ./deploy/install.sh
-"
-
+    fail "Run this installer with sudo/root."
 fi
 
 
 # ============================================================
-# 1. Operating system
+# Project path validation
 # ============================================================
-
-info "1. Checking operating system"
-
-
-if [[ "$(uname -s)" != "Linux" ]]; then
-
-    fail "
-install.sh ใช้สำหรับ Linux Production Server เท่านั้น
-"
-
-fi
-
-
-if [[ ! -f /etc/debian_version ]]; then
-
-    fail "
-ไม่พบ Debian environment
-
-Installer นี้จัดทำสำหรับ Debian Production Server
-"
-
-fi
-
-
-ok "Debian detected"
-
-
-if [[ -f /etc/os-release ]]; then
-
-    # shellcheck disable=SC1091
-    source /etc/os-release
-
-    echo "OS      : ${PRETTY_NAME:-Debian}"
-
-fi
-
-
-echo "Kernel  : $(uname -r)"
-echo "Arch    : $(uname -m)"
-
-
-# ============================================================
-# systemd check
-# ============================================================
-
-if ! command -v systemctl >/dev/null 2>&1; then
-
-    fail "
-ไม่พบ systemctl
-
-Production Installer ต้องใช้ systemd
-"
-
-fi
-
-
-ok "systemd available"
-
-
-# ============================================================
-# 2. Project directory
-# ============================================================
-
-info "2. Checking project directory"
-
 
 if [[ ! -d "${PROJECT_DIR}" ]]; then
+    fail "Project directory not found: ${PROJECT_DIR}"
+fi
 
-    fail "
-ไม่พบโปรเจกต์ที่:
-
-${PROJECT_DIR}
-
-ต้องนำโปรเจกต์ไปไว้ที่ Path นี้ก่อน
-"
-
+if [[ ! -d "${DEPLOY_DIR}" ]]; then
+    fail "Deploy directory not found: ${DEPLOY_DIR}"
 fi
 
 
-required_files=(
+# ============================================================
+# Required project files
+# ============================================================
 
+REQUIRED_FILES=(
     "${PROJECT_DIR}/main.py"
-
     "${PROJECT_DIR}/app.py"
-
     "${PROJECT_DIR}/config.py"
-
-    "${PROJECT_DIR}/camera.py"
-
-    "${PROJECT_DIR}/ptz.py"
-
-    "${PROJECT_DIR}/detection.py"
-
     "${PROJECT_DIR}/requirements.txt"
-
-    "${PROJECT_DIR}/preflight.py"
-
-    "${PROJECT_DIR}/benchmark_inference.py"
-
-    "${PROJECT_DIR}/deploy/install.sh"
-
-    "${PROJECT_DIR}/deploy/production.env.example"
-
-    "${SOURCE_SERVICE_FILE}"
-
-    "${SOURCE_DASHBOARD_SERVICE_FILE}"
-
+    "${DEPLOY_DIR}/production.env.example"
+    "${DEPLOY_DIR}/${DETECTION_UNIT}"
+    "${DEPLOY_DIR}/${DASHBOARD_UNIT}"
 )
 
+for required_file in "${REQUIRED_FILES[@]}"; do
 
-for file in "${required_files[@]}"; do
-
-    if [[ ! -f "${file}" ]]; then
-
-        fail "
-ไม่พบไฟล์ที่จำเป็น:
-
-${file}
-"
-
+    if [[ ! -f "${required_file}" ]]; then
+        fail "Missing required file: ${required_file}"
     fi
 
 done
 
-
-ok "Project structure พร้อม"
+ok "Required project files found"
 
 
 # ============================================================
-# Production environment template safety
-# ============================================================
-#
-# CAMERA_LAT / CAMERA_LON ถูกอ่านเป็น float
-#
-# ดังนั้น Template ต้องใช้:
-#
-# CAMERA_LAT=nan
-# CAMERA_LON=nan
-#
-# หรือค่าตัวเลขจริง
-#
-# ห้ามเป็น CHANGE_ME
-#
+# Debian validation
 # ============================================================
 
-PRODUCTION_TEMPLATE="${PROJECT_DIR}/deploy/production.env.example"
+log "Validating operating system"
 
-
-if grep -Eq \
-    '^[[:space:]]*CAMERA_(LAT|LON)[[:space:]]*=[[:space:]]*CHANGE_ME[[:space:]]*$' \
-    "${PRODUCTION_TEMPLATE}"
-then
-
-    fail "
-deploy/production.env.example ยังมี:
-
-CAMERA_LAT=CHANGE_ME
-หรือ
-CAMERA_LON=CHANGE_ME
-
-config.py ต้องแปลงสองค่านี้เป็น float
-
-กรุณาแก้ Template เป็น:
-
-CAMERA_LAT=nan
-CAMERA_LON=nan
-
-ก่อนรัน Installer
-"
-
+if [[ ! -f /etc/os-release ]]; then
+    fail "/etc/os-release not found"
 fi
 
+# shellcheck disable=SC1091
+source /etc/os-release
 
-ok "Production environment template format พร้อม"
-
-
-# ============================================================
-# 3. Protect running production services
-# ============================================================
-
-info "3. Checking existing production services"
-
-
-if systemctl is-active \
-    --quiet \
-    "${SERVICE_NAME}" \
-    2>/dev/null
-then
-
-    fail "
-${SERVICE_NAME} กำลังทำงานอยู่
-
-Installer จะไม่แก้ Python packages,
-Environment หรือ Service files
-ขณะที่ Detection Runtime กำลังทำงาน
-
-หยุด Service ก่อน:
-
-sudo systemctl stop ${SERVICE_NAME}
-"
-
+if [[ "${ID:-}" != "debian" ]]; then
+    fail "Unsupported OS: ${ID:-unknown}. Debian 13 is required."
 fi
 
-
-if systemctl is-active \
-    --quiet \
-    "${DASHBOARD_SERVICE_NAME}" \
-    2>/dev/null
-then
-
-    fail "
-${DASHBOARD_SERVICE_NAME} กำลังทำงานอยู่
-
-Installer จะไม่แก้ Python packages,
-Environment หรือ Service files
-ขณะที่ Dashboard กำลังทำงาน
-
-หยุด Service ก่อน:
-
-sudo systemctl stop ${DASHBOARD_SERVICE_NAME}
-"
-
+if [[ "${VERSION_ID:-}" != "13" ]]; then
+    fail "Unsupported Debian version: ${VERSION_ID:-unknown}. Debian 13 is required."
 fi
 
-
-ok "Production services ไม่ได้กำลังทำงาน"
+ok "Debian ${VERSION_ID}"
 
 
 # ============================================================
-# 4. Python
+# Architecture validation
 # ============================================================
 
-info "4. Checking Python 3.12"
+ARCH="$(uname -m)"
 
-
-if ! command -v \
-    "${PYTHON_BIN}" \
-    >/dev/null 2>&1
-then
-
-    fail "
-ไม่พบ ${PYTHON_BIN}
-
-โปรเจกต์นี้ใช้ Python 3.12
-
-Installer จะไม่ใช้ python3 เวอร์ชันอื่น
-แทนโดยอัตโนมัติ
-
-ต้องติดตั้ง Python 3.12 ก่อน
-แล้วกลับมารัน Installer ใหม่
-"
-
+if [[ "${ARCH}" != "x86_64" ]]; then
+    fail "Unsupported architecture: ${ARCH}. x86_64 is required."
 fi
 
+ok "Architecture: ${ARCH}"
+
+
+# ============================================================
+# Required system commands
+# ============================================================
+
+log "Checking required system commands"
+
+REQUIRED_COMMANDS=(
+    getent
+    groupadd
+    useradd
+    runuser
+    install
+    find
+    systemctl
+    systemd-analyze
+)
+
+for command_name in "${REQUIRED_COMMANDS[@]}"; do
+
+    if ! command -v "${command_name}" >/dev/null 2>&1; then
+        fail "Required command not found: ${command_name}"
+    fi
+
+done
+
+ok "Required system commands available"
+
+
+# ============================================================
+# Existing service safety
+# ============================================================
+
+log "Checking service state"
+
+if systemctl is-active --quiet "${DETECTION_UNIT}"; then
+    fail "${DETECTION_UNIT} is running. Stop it before installation/update."
+fi
+
+if systemctl is-active --quiet "${DASHBOARD_UNIT}"; then
+    fail "${DASHBOARD_UNIT} is running. Stop it before installation/update."
+fi
+
+ok "Production services are not running"
+
+
+# ============================================================
+# Python 3.12 validation
+# ============================================================
+
+log "Validating Python 3.12"
+
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+    fail "${PYTHON_BIN} not found"
+fi
 
 PYTHON_VERSION="$(
-    "${PYTHON_BIN}" \
-        -c \
-        'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")'
+    "${PYTHON_BIN}" -c \
+        'import sys; print(".".join(map(str, sys.version_info[:3])))'
 )"
 
+case "${PYTHON_VERSION}" in
 
-PYTHON_MAJOR_MINOR="$(
-    "${PYTHON_BIN}" \
-        -c \
-        'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
-)"
+    3.12.*)
+        ;;
 
+    *)
+        fail "Python 3.12.x required; found ${PYTHON_VERSION}"
+        ;;
 
-echo "Python : ${PYTHON_VERSION}"
+esac
 
-
-if [[ "${PYTHON_MAJOR_MINOR}" != "3.12" ]]; then
-
-    fail "
-Python version ไม่ถูกต้อง
-
-พบ:
-${PYTHON_VERSION}
-
-ต้องการ:
-Python 3.12.x
-"
-
-fi
-
-
-ok "Python 3.12 พร้อม"
+ok "Python ${PYTHON_VERSION}"
 
 
 # ============================================================
-# Python venv capability
+# Runtime group
 # ============================================================
 
-if ! "${PYTHON_BIN}" \
-    -c 'import venv, ensurepip' \
-    >/dev/null 2>&1
-then
+log "Preparing runtime group"
 
-    fail "
-Python 3.12 ไม่มี venv หรือ ensurepip พร้อมใช้งาน
+if getent group "${RUNTIME_GROUP}" >/dev/null 2>&1; then
 
-ต้องเตรียม Python 3.12 environment
-ให้สามารถสร้าง virtual environment ได้ก่อน
-"
-
-fi
-
-
-ok "Python venv capability พร้อม"
-
-
-# ============================================================
-# 5. smartfire group
-# ============================================================
-
-info "5. Creating service account"
-
-
-if getent group \
-    "${SERVICE_GROUP}" \
-    >/dev/null 2>&1
-then
-
-    ok "Group ${SERVICE_GROUP} มีอยู่แล้ว"
+    ok "Group already exists: ${RUNTIME_GROUP}"
 
 else
 
-    groupadd \
-        --system \
-        "${SERVICE_GROUP}"
+    groupadd --system "${RUNTIME_GROUP}"
 
-    ok "สร้าง Group ${SERVICE_GROUP}"
+    ok "Created group: ${RUNTIME_GROUP}"
 
 fi
 
 
 # ============================================================
-# smartfire user
+# Runtime user
 # ============================================================
 
-if id \
-    "${SERVICE_USER}" \
-    >/dev/null 2>&1
-then
+log "Preparing runtime user"
 
-    ok "User ${SERVICE_USER} มีอยู่แล้ว"
+if id -u "${RUNTIME_USER}" >/dev/null 2>&1; then
+
+    ok "User already exists: ${RUNTIME_USER}"
 
 else
 
     useradd \
         --system \
-        --gid "${SERVICE_GROUP}" \
+        --gid "${RUNTIME_GROUP}" \
         --home-dir "${PROJECT_DIR}" \
         --no-create-home \
         --shell /usr/sbin/nologin \
-        "${SERVICE_USER}"
+        "${RUNTIME_USER}"
 
-    ok "สร้าง User ${SERVICE_USER}"
+    ok "Created user: ${RUNTIME_USER}"
 
 fi
 
 
 # ============================================================
-# 6. Runtime directories
+# Runtime directories
 # ============================================================
 
-info "6. Preparing runtime directories"
+log "Preparing runtime directories"
 
-
-mkdir -p \
-    "${PROJECT_DIR}/static" \
-    "${PROJECT_DIR}/static/alert_spool" \
-    "${PROJECT_DIR}/calibration" \
-    "${PROJECT_DIR}/models"
-
-
-# ============================================================
-# Runtime writes static/
-# ============================================================
-
-chown -R \
-    "${SERVICE_USER}:${SERVICE_GROUP}" \
+install \
+    -d \
+    -m 0750 \
+    -o "${RUNTIME_USER}" \
+    -g "${RUNTIME_GROUP}" \
     "${PROJECT_DIR}/static"
 
-
-# ============================================================
-# Calibration tools write calibration/
-# ============================================================
-
-chown -R \
-    "${SERVICE_USER}:${SERVICE_GROUP}" \
+install \
+    -d \
+    -m 0750 \
+    -o "${RUNTIME_USER}" \
+    -g "${RUNTIME_GROUP}" \
     "${PROJECT_DIR}/calibration"
 
+install \
+    -d \
+    -m 0750 \
+    -o root \
+    -g "${RUNTIME_GROUP}" \
+    "${PROJECT_DIR}/models"
 
-ok "Runtime directories พร้อม"
+install \
+    -d \
+    -m 0750 \
+    -o root \
+    -g root \
+    "${ENV_DIR}"
+
+chown -R \
+    "${RUNTIME_USER}:${RUNTIME_GROUP}" \
+    "${PROJECT_DIR}/static" \
+    "${PROJECT_DIR}/calibration"
+
+chown -R \
+    "root:${RUNTIME_GROUP}" \
+    "${PROJECT_DIR}/models"
+
+find "${PROJECT_DIR}/static" \
+    -type d \
+    -exec chmod 0750 {} +
+
+find "${PROJECT_DIR}/calibration" \
+    -type d \
+    -exec chmod 0750 {} +
+
+find "${PROJECT_DIR}/models" \
+    -type d \
+    -exec chmod 0750 {} +
+
+find "${PROJECT_DIR}/static" \
+    -type f \
+    -exec chmod 0640 {} +
+
+find "${PROJECT_DIR}/calibration" \
+    -type f \
+    -exec chmod 0640 {} +
+
+find "${PROJECT_DIR}/models" \
+    -type f \
+    -exec chmod 0640 {} +
+
+ok "Runtime directories prepared"
 
 
 # ============================================================
-# 7. Python virtual environment
+# Project directory access
 # ============================================================
 
-info "7. Preparing Python virtual environment"
+chgrp "${RUNTIME_GROUP}" "${PROJECT_DIR}"
+
+chmod g+rx "${PROJECT_DIR}"
+
+while IFS= read -r -d '' python_file; do
+
+    chgrp "${RUNTIME_GROUP}" "${python_file}"
+
+    chmod g+r "${python_file}"
+
+done < <(
+    find "${PROJECT_DIR}" \
+        -maxdepth 1 \
+        -type f \
+        -name '*.py' \
+        -print0
+)
 
 
-if [[ -x "${VENV_PYTHON}" ]]; then
+# ============================================================
+# Python virtual environment
+# ============================================================
 
-    EXISTING_VENV_VERSION="$(
-        "${VENV_PYTHON}" \
-            -c \
-            'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
-    )"
+log "Preparing Python virtual environment"
 
+if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
 
-    if [[ "${EXISTING_VENV_VERSION}" != "3.12" ]]; then
+    "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 
-        fail "
-พบ venv เดิม แต่ใช้ Python ${EXISTING_VENV_VERSION}
-
-Installer จะไม่ลบ venv ให้เอง
-
-Path:
-
-${VENV_DIR}
-
-กรุณาตรวจสอบก่อนลบหรือเปลี่ยนด้วยตนเอง
-"
-
-    fi
-
-
-    ok "พบ Python 3.12 venv เดิม"
+    ok "Created venv: ${VENV_DIR}"
 
 else
 
-    echo "Creating venv..."
-
-
-    if ! "${PYTHON_BIN}" \
-        -m venv \
-        "${VENV_DIR}"
-    then
-
-        fail "
-สร้าง venv ไม่สำเร็จ
-
-ตรวจสอบว่า Python 3.12
-มี module venv/ensurepip พร้อม
-"
-
-    fi
-
-
-    ok "สร้าง venv สำเร็จ"
+    ok "Existing venv found: ${VENV_DIR}"
 
 fi
 
-
-# ============================================================
-# Venv Python check
-# ============================================================
-
-if [[ ! -x "${VENV_PYTHON}" ]]; then
-
-    fail "
-ไม่พบ Python ภายใน venv:
-
-${VENV_PYTHON}
-"
-
-fi
-
-
-echo "Venv Python:"
-"${VENV_PYTHON}" --version
+VENV_PYTHON="${VENV_DIR}/bin/python"
 
 
 # ============================================================
-# 8. Upgrade Python packaging tools
+# Validate venv Python
 # ============================================================
 
-info "8. Updating pip tools"
+VENV_PYTHON_VERSION="$(
+    "${VENV_PYTHON}" -c \
+        'import sys; print(".".join(map(str, sys.version_info[:3])))'
+)"
+
+case "${VENV_PYTHON_VERSION}" in
+
+    3.12.*)
+        ;;
+
+    *)
+        fail "Existing venv is not Python 3.12: ${VENV_PYTHON_VERSION}"
+        ;;
+
+esac
+
+ok "venv Python ${VENV_PYTHON_VERSION}"
 
 
-"${VENV_PYTHON}" \
-    -m pip \
-    install \
+# ============================================================
+# Packaging tools
+# ============================================================
+
+log "Updating pip/setuptools/wheel"
+
+"${VENV_PYTHON}" -m pip install \
     --upgrade \
     pip \
     setuptools \
     wheel
 
-
-ok "pip tools พร้อม"
+ok "Python packaging tools updated"
 
 
 # ============================================================
-# 9. CPU-only PyTorch
+# CPU-only PyTorch
 # ============================================================
 #
-# Production Server ใช้ CPU inference
+# Production baseline is CPU.
 #
-# ติดตั้ง CPU wheel โดยตรงเพื่อไม่ให้ดึง
-# CUDA build ที่ไม่จำเป็น
+# If an existing CUDA PyTorch build is detected,
+# replace it with the official CPU wheel.
 #
 # ============================================================
 
-info "9. Installing CPU-only PyTorch"
+log "Checking CPU PyTorch"
+
+CPU_TORCH_OK=0
+
+if "${VENV_PYTHON}" - <<'PY' >/dev/null 2>&1
+import torch
+import torchvision
+
+if torch.version.cuda is not None:
+    raise SystemExit(1)
+
+raise SystemExit(0)
+PY
+then
+    CPU_TORCH_OK=1
+fi
 
 
-"${VENV_PYTHON}" \
-    -m pip \
-    install \
-    --upgrade \
-    torch \
-    torchvision \
-    --index-url \
-    https://download.pytorch.org/whl/cpu
+if [[ "${CPU_TORCH_OK}" -eq 1 ]]; then
 
+    ok "CPU-only PyTorch already installed"
 
-ok "CPU-only PyTorch พร้อม"
+else
+
+    log "Installing official CPU-only PyTorch"
+
+    "${VENV_PYTHON}" -m pip install \
+        --upgrade \
+        torch \
+        torchvision \
+        --index-url https://download.pytorch.org/whl/cpu
+
+    ok "CPU-only PyTorch installed"
+
+fi
 
 
 # ============================================================
-# 10. Project dependencies
+# Project runtime dependencies
 # ============================================================
 
-info "10. Installing project dependencies"
+log "Installing project dependencies"
 
+"${VENV_PYTHON}" -m pip install \
+    -r "${PROJECT_DIR}/requirements.txt"
 
-"${VENV_PYTHON}" \
-    -m pip \
-    install \
-    -r \
-    "${PROJECT_DIR}/requirements.txt"
-
-
-ok "Project dependencies พร้อม"
+ok "Project dependencies installed"
 
 
 # ============================================================
-# 11. OpenVINO
+# OpenVINO
+# ============================================================
+#
+# Optional on Debian 13.
+#
+# INSTALL_OPENVINO=0
+#     Skip installation.
+#
+# INSTALL_OPENVINO=1
+#     Attempt installation.
+#
+# A failed optional OpenVINO install does not invalidate
+# the PyTorch CPU production baseline.
+#
 # ============================================================
 
-info "11. Installing OpenVINO"
+case "${INSTALL_OPENVINO}" in
 
+    0)
 
-"${VENV_PYTHON}" \
-    -m pip \
-    install \
-    --upgrade \
-    openvino
+        log "OpenVINO installation skipped (optional)"
 
+        ;;
 
-ok "OpenVINO พร้อม"
+    1)
+
+        log "Attempting optional OpenVINO installation"
+
+        if "${VENV_PYTHON}" -m pip install --upgrade openvino; then
+
+            ok "OpenVINO installed"
+
+        else
+
+            warn "OpenVINO installation failed"
+            warn "PyTorch CPU baseline remains available"
+
+        fi
+
+        ;;
+
+    *)
+
+        fail "INSTALL_OPENVINO must be 0 or 1"
+
+        ;;
+
+esac
 
 
 # ============================================================
 # Dependency consistency
 # ============================================================
 
-info "12. Checking Python dependency consistency"
+log "Running pip dependency check"
+
+"${VENV_PYTHON}" -m pip check
+
+ok "pip dependency check passed"
 
 
-if ! "${VENV_PYTHON}" \
-    -m pip \
-    check
+# ============================================================
+# Core import verification
+# ============================================================
+
+log "Verifying runtime Python imports"
+
+"${VENV_PYTHON}" - <<'PY'
+import importlib.metadata
+
+import cv2
+import flask
+import numpy
+import psutil
+import requests
+import torch
+import torchvision
+import ultralytics
+import waitress
+
+print("numpy      :", numpy.__version__)
+print("opencv     :", cv2.__version__)
+print("requests   :", requests.__version__)
+print("psutil     :", psutil.__version__)
+print("Flask      :", flask.__version__ if hasattr(flask, "__version__") else importlib.metadata.version("Flask"))
+print("Waitress   :", importlib.metadata.version("waitress"))
+print("torch      :", torch.__version__)
+print("torchvision:", torchvision.__version__)
+print("ultralytics:", ultralytics.__version__)
+
+if torch.version.cuda is not None:
+    raise SystemExit(
+        "Production baseline requires CPU-only PyTorch, "
+        f"but CUDA build was detected: {torch.version.cuda}"
+    )
+
+print("PyTorch CPU build: OK")
+PY
+
+ok "Core imports verified"
+
+
+# ============================================================
+# OpenVINO verification
+# ============================================================
+
+if "${VENV_PYTHON}" -c \
+    'import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("openvino") else 1)' \
+    >/dev/null 2>&1
 then
 
-    fail "
-pip dependency check ไม่ผ่าน
+    "${VENV_PYTHON}" - <<'PY'
+from openvino import get_version
 
-ตรวจสอบ Package versions ก่อน Production
-"
+print("OpenVINO   :", get_version())
+PY
+
+    ok "OpenVINO import verified"
+
+else
+
+    warn "OpenVINO is not installed"
+    warn "This is allowed while MODEL_BACKEND=pt"
 
 fi
 
 
-ok "Python dependency consistency ผ่าน"
+# ============================================================
+# venv permissions
+# ============================================================
+
+log "Applying venv permissions"
+
+chown -R \
+    "root:${RUNTIME_GROUP}" \
+    "${VENV_DIR}"
+
+chmod -R \
+    g+rX,o-rwx \
+    "${VENV_DIR}"
+
+ok "venv permissions applied"
 
 
 # ============================================================
-# 13. Verify imports
+# Runtime user verification
 # ============================================================
 
-info "13. Verifying Python runtime"
+log "Verifying runtime-user access"
 
+if ! runuser \
+    -u "${RUNTIME_USER}" \
+    -- test -r "${PROJECT_DIR}/main.py"
+then
+    fail "${RUNTIME_USER} cannot read main.py"
+fi
 
-"${VENV_PYTHON}" - <<'PY'
+if ! runuser \
+    -u "${RUNTIME_USER}" \
+    -- test -r "${PROJECT_DIR}/app.py"
+then
+    fail "${RUNTIME_USER} cannot read app.py"
+fi
 
-import sys
+if ! runuser \
+    -u "${RUNTIME_USER}" \
+    -- test -x "${VENV_DIR}/bin/python"
+then
+    fail "${RUNTIME_USER} cannot execute venv Python"
+fi
 
-print(
-    "Python:",
-    sys.version.split()[0],
-)
+if ! runuser \
+    -u "${RUNTIME_USER}" \
+    -- test -x "${VENV_DIR}/bin/waitress-serve"
+then
+    fail "${RUNTIME_USER} cannot execute waitress-serve"
+fi
 
-packages = [
-    "cv2",
-    "numpy",
-    "requests",
-    "psutil",
-    "flask",
-    "waitress",
-    "torch",
-    "ultralytics",
-    "openvino",
-]
+runuser \
+    -u "${RUNTIME_USER}" \
+    -- "${VENV_PYTHON}" \
+    -c 'import flask, waitress, torch, ultralytics; print("runtime imports: OK")'
 
-failed = []
-
-for package in packages:
-
-    try:
-
-        module = __import__(
-            package
-        )
-
-        version = getattr(
-            module,
-            "__version__",
-            "unknown",
-        )
-
-        print(
-            f"[OK] {package:<12} "
-            f"{version}"
-        )
-
-    except Exception as exc:
-
-        failed.append(
-            (
-                package,
-                str(exc),
-            )
-        )
-
-
-if failed:
-
-    print()
-
-    for package, error in failed:
-
-        print(
-            f"[FAIL] {package}: "
-            f"{error}"
-        )
-
-    raise SystemExit(1)
-
-PY
-
-
-ok "Python runtime verification ผ่าน"
+ok "Runtime-user access verified"
 
 
 # ============================================================
-# PyTorch CPU verification
+# Production environment
 # ============================================================
 
-info "14. Verifying PyTorch device"
-
-
-"${VENV_PYTHON}" - <<'PY'
-
-import torch
-
-print(
-    "Torch version :",
-    torch.__version__,
-)
-
-print(
-    "CUDA available:",
-    torch.cuda.is_available(),
-)
-
-print(
-    "Torch threads :",
-    torch.get_num_threads(),
-)
-
-PY
-
-
-ok "PyTorch verification ผ่าน"
-
-
-# ============================================================
-# 15. Production environment directory
-# ============================================================
-
-info "15. Preparing production environment"
-
-
-install \
-    -d \
-    -m 0755 \
-    -o root \
-    -g root \
-    "${CONFIG_DIR}"
-
+log "Preparing production environment"
 
 if [[ -f "${ENV_FILE}" ]]; then
 
-    warn "
-พบ Production environment เดิม:
-
-${ENV_FILE}
-
-Installer จะไม่เขียนทับไฟล์นี้
-"
+    ok "Existing production.env preserved"
 
 else
 
@@ -917,578 +714,139 @@ else
         -m 0600 \
         -o root \
         -g root \
-        "${PRODUCTION_TEMPLATE}" \
+        "${DEPLOY_DIR}/production.env.example" \
         "${ENV_FILE}"
 
-    ok "สร้าง ${ENV_FILE}"
-
-    warn "
-ไฟล์ Production environment ยังเป็น TEMPLATE
-
-ต้องแก้ค่าจริงก่อนใช้งาน Production
-"
+    ok "Created ${ENV_FILE} from template"
 
 fi
 
+chown root:root "${ENV_FILE}"
 
-# ============================================================
-# Environment permissions
-# ============================================================
-
-chown \
-    root:root \
-    "${ENV_FILE}"
-
-
-chmod \
-    0600 \
-    "${ENV_FILE}"
-
-
-ok "Production environment permission = 0600"
+chmod 0600 "${ENV_FILE}"
 
 
 # ============================================================
-# Detect invalid LAT/LON placeholders
+# Install systemd units
 # ============================================================
 
-if grep -Eq \
-    '^[[:space:]]*CAMERA_(LAT|LON)[[:space:]]*=[[:space:]]*CHANGE_ME[[:space:]]*$' \
-    "${ENV_FILE}"
-then
-
-    fail "
-Production environment มี CAMERA_LAT/CAMERA_LON
-เป็น CHANGE_ME
-
-ไฟล์:
-
-${ENV_FILE}
-
-ให้ใช้ nan ระหว่างที่ยังไม่ได้ตั้ง Site:
-
-CAMERA_LAT=nan
-CAMERA_LON=nan
-
-หรือเปลี่ยนเป็นพิกัดจริงก่อน Full Production Validation
-"
-
-fi
-
-
-# ============================================================
-# Camera credential placeholders
-# ============================================================
-
-if grep -Eq \
-    '^[[:space:]]*CAMERA_(IP|USER|PWD)[[:space:]]*=[[:space:]]*CHANGE_ME[[:space:]]*$' \
-    "${ENV_FILE}"
-then
-
-    warn "
-production.env ยังมี Camera Placeholder
-
-นี่ไม่ทำให้ Installer ล้ม
-แต่ Full Preflight จะไม่ผ่านจนกว่าจะตั้งค่าจริง
-"
-
-fi
-
-
-# ============================================================
-# 16. Install systemd services
-# ============================================================
-
-info "16. Installing systemd services"
-
-
-# ============================================================
-# Detection service
-# ============================================================
+log "Installing systemd unit files"
 
 install \
     -m 0644 \
     -o root \
     -g root \
-    "${SOURCE_SERVICE_FILE}" \
-    "${SERVICE_FILE}"
-
-
-ok "ติดตั้ง ${SERVICE_NAME}"
-
-
-# ============================================================
-# Dashboard service
-# ============================================================
+    "${DEPLOY_DIR}/${DETECTION_UNIT}" \
+    "${SYSTEMD_DIR}/${DETECTION_UNIT}"
 
 install \
     -m 0644 \
     -o root \
     -g root \
-    "${SOURCE_DASHBOARD_SERVICE_FILE}" \
-    "${DASHBOARD_SERVICE_FILE}"
-
-
-ok "ติดตั้ง ${DASHBOARD_SERVICE_NAME}"
-
-
-# ============================================================
-# Reload systemd
-# ============================================================
+    "${DEPLOY_DIR}/${DASHBOARD_UNIT}" \
+    "${SYSTEMD_DIR}/${DASHBOARD_UNIT}"
 
 systemctl daemon-reload
 
-
-ok "systemd daemon reload completed"
-
-
-# ============================================================
-# Optional systemd unit verification
-# ============================================================
-
-if command -v \
-    systemd-analyze \
-    >/dev/null 2>&1
-then
-
-    echo
-    echo "Checking systemd unit syntax..."
-
-
-    if systemd-analyze verify \
-        "${SERVICE_FILE}" \
-        "${DASHBOARD_SERVICE_FILE}"
-    then
-
-        ok "systemd unit verification ผ่าน"
-
-    else
-
-        warn "
-systemd-analyze verify พบคำเตือนหรือข้อผิดพลาด
-
-ตรวจ Service files ก่อน Enable Production
-"
-
-    fi
-
-fi
+ok "systemd unit files installed"
 
 
 # ============================================================
-# Ensure Installer did not enable/start services
+# Validate systemd units
 # ============================================================
 
-if systemctl is-active \
-    --quiet \
-    "${SERVICE_NAME}" \
-    2>/dev/null
-then
+log "Validating systemd units"
 
-    fail "
-${SERVICE_NAME} กลายเป็น Active โดยไม่คาดคิด
+systemd-analyze verify \
+    "${SYSTEMD_DIR}/${DETECTION_UNIT}" \
+    "${SYSTEMD_DIR}/${DASHBOARD_UNIT}"
 
-Installer นี้ไม่ควร Start Service
-"
-
-fi
-
-
-if systemctl is-active \
-    --quiet \
-    "${DASHBOARD_SERVICE_NAME}" \
-    2>/dev/null
-then
-
-    fail "
-${DASHBOARD_SERVICE_NAME} กลายเป็น Active โดยไม่คาดคิด
-
-Installer นี้ไม่ควร Start Service
-"
-
-fi
-
-
-ok "Services ยังไม่ถูก Start ตามนโยบาย"
+ok "systemd unit validation passed"
 
 
 # ============================================================
-# 17. AI model check
+# Model status
 # ============================================================
 
-info "17. Checking AI models"
-
+MODEL_PT="${PROJECT_DIR}/models/fire.pt"
 
 if [[ -f "${MODEL_PT}" ]]; then
 
-    ok "พบ models/fire.pt"
-
-    echo "Model size:"
-    du -h "${MODEL_PT}" 2>/dev/null || true
+    ok "PyTorch model found: ${MODEL_PT}"
 
 else
 
-    warn "
-ยังไม่พบ:
-
-${MODEL_PT}
-
-ต้องนำ Model มาใส่ก่อน
-AI Benchmark / Camera AI Test / Production
-"
-
-fi
-
-
-if [[ -d "${MODEL_OV}" ]]; then
-
-    ok "พบ OpenVINO model"
-
-    echo "OpenVINO model directory:"
-    du -sh "${MODEL_OV}" 2>/dev/null || true
-
-else
-
-    warn "
-ยังไม่พบ:
-
-${MODEL_OV}
-
-สามารถ Export ภายหลังด้วย:
-
-${VENV_PYTHON} ${PROJECT_DIR}/export_openvino.py
-"
+    warn "Model not found: ${MODEL_PT}"
+    warn "Copy the validated production model before Full Preflight"
 
 fi
 
 
 # ============================================================
-# 18. Calibration check
+# Calibration status
 # ============================================================
 
-info "18. Checking calibration files"
-
-
-# ============================================================
-# Camera intrinsics
-# ============================================================
+INTRINSICS_FILE="${PROJECT_DIR}/calibration/camera_intrinsics.json"
+SITE_FILE="${PROJECT_DIR}/calibration/site.json"
+DISTANCE_FILE="${PROJECT_DIR}/calibration/distance_global.json"
 
 if [[ -f "${INTRINSICS_FILE}" ]]; then
-
-    ok "พบ camera_intrinsics.json"
-
+    ok "Intrinsics file found"
 else
-
-    warn "
-ยังไม่มี:
-
-${INTRINSICS_FILE}
-
-หาก Camera / Lens / Zoom / Resolution
-ยังไม่เคยผ่าน Intrinsics Calibration
-ต้องทำก่อน Production
-"
-
+    warn "camera_intrinsics.json not found"
 fi
-
-
-# ============================================================
-# Bearing calibration
-# ============================================================
 
 if [[ -f "${SITE_FILE}" ]]; then
-
-    ok "พบ site.json"
-
+    ok "Site bearing calibration found"
 else
-
-    warn "
-ยังไม่มี:
-
-${SITE_FILE}
-
-ต้องทำ Bearing Calibration
-หลังติดตั้งกล้องในสถานที่จริง
-"
-
+    warn "site.json not found"
 fi
-
-
-# ============================================================
-# Distance calibration
-# ============================================================
 
 if [[ -f "${DISTANCE_FILE}" ]]; then
-
-    ok "พบ distance_global.json"
-
+    ok "Distance calibration found"
 else
-
-    warn "
-ยังไม่มี:
-
-${DISTANCE_FILE}
-
-ต้องทำ Distance Calibration
-หลังติดตั้งกล้องในสถานที่จริง
-"
-
+    warn "distance_global.json not found"
 fi
 
 
 # ============================================================
-# 19. Final permissions
+# Final status
 # ============================================================
 
-info "19. Applying final permissions"
-
-
-# ============================================================
-# Project root
-# ============================================================
-
-chmod \
-    0755 \
-    "${PROJECT_DIR}"
-
-
-# ============================================================
-# Runtime writable directories
-# ============================================================
-
-chown -R \
-    "${SERVICE_USER}:${SERVICE_GROUP}" \
-    "${PROJECT_DIR}/static"
-
-
-chown -R \
-    "${SERVICE_USER}:${SERVICE_GROUP}" \
-    "${PROJECT_DIR}/calibration"
-
-
-chmod -R \
-    u+rwX \
-    "${PROJECT_DIR}/static"
-
-
-chmod -R \
-    g+rwX \
-    "${PROJECT_DIR}/static"
-
-
-chmod -R \
-    o-rwx \
-    "${PROJECT_DIR}/static"
-
-
-chmod -R \
-    u+rwX \
-    "${PROJECT_DIR}/calibration"
-
-
-chmod -R \
-    g+rwX \
-    "${PROJECT_DIR}/calibration"
-
-
-chmod -R \
-    o-rwx \
-    "${PROJECT_DIR}/calibration"
-
-
-ok "Runtime directory permissions พร้อม"
-
-
-# ============================================================
-# Model permissions
-# ============================================================
-#
-# Model ไม่จำเป็นต้อง writable โดย Runtime
-# แต่ service user ต้องอ่านได้
-#
-# ============================================================
-
-if [[ -f "${MODEL_PT}" ]]; then
-
-    chmod \
-        0644 \
-        "${MODEL_PT}"
-
-fi
-
-
-if [[ -d "${MODEL_OV}" ]]; then
-
-    find \
-        "${MODEL_OV}" \
-        -type d \
-        -exec chmod 0755 {} \;
-
-    find \
-        "${MODEL_OV}" \
-        -type f \
-        -exec chmod 0644 {} \;
-
-fi
-
-
-ok "Model permissions พร้อม"
-
-
-# ============================================================
-# 20. Service configuration summary
-# ============================================================
-
-info "20. Production configuration summary"
-
-
-echo "Project:"
-echo "  ${PROJECT_DIR}"
-echo
-
-echo "Python:"
-echo "  ${VENV_PYTHON}"
-echo
-
-echo "Environment:"
-echo "  ${ENV_FILE}"
-echo
-
-echo "Detection service:"
-echo "  ${SERVICE_FILE}"
-echo
-
-echo "Dashboard service:"
-echo "  ${DASHBOARD_SERVICE_FILE}"
-echo
-
-echo "Detection runtime:"
-echo "  ${PROJECT_DIR}/main.py"
-echo
-
-echo "Dashboard runtime:"
-echo "  ${PROJECT_DIR}/app.py"
-echo
-
-
-# ============================================================
-# IMPORTANT
-# ============================================================
-#
-# เราจะยังไม่ Start หรือ Enable Services
-#
-# เพราะก่อน Production ต้อง:
-#
-# - ตั้ง production.env
-# - Offline Preflight
-# - Production Benchmark
-# - Camera Test
-# - PTZ Test
-# - PTZ / Frame Sync
-# - Camera Intrinsics validation
-# - Bearing Calibration
-# - Distance Calibration
-# - Bearing Verification
-# - Distance Verification
-# - Full Preflight
-# - Full Sweep
-# - Telegram Test
-#
-# ============================================================
-
-
-info "INSTALLATION COMPLETE"
-
-
-echo
-echo "Project:"
-echo "${PROJECT_DIR}"
-
-echo
-echo "Python:"
-echo "${VENV_PYTHON}"
-
-echo
-echo "Environment:"
-echo "${ENV_FILE}"
-
-echo
-echo "Services:"
-echo "${SERVICE_FILE}"
-echo "${DASHBOARD_SERVICE_FILE}"
-
-echo
-echo "------------------------------------------------------------"
-
-echo
-echo "Detection Service ยังไม่ได้ Start"
-echo "Dashboard Service ยังไม่ได้ Start"
-echo
-echo "และทั้งสอง Service"
-echo "ยังไม่ได้ Enable ตอน Boot"
-
-echo
-echo "นี่เป็นพฤติกรรมที่ตั้งใจไว้"
-
-echo
-echo "------------------------------------------------------------"
-
-echo
-echo "ขั้นต่อไป:"
-echo
-echo " 1. แก้ Production environment"
-echo " 2. รัน Offline Preflight"
-echo " 3. ตรวจ Unit Tests"
-echo " 4. Benchmark PyTorch"
-echo " 5. Benchmark OpenVINO"
-echo " 6. เลือก Production Backend"
-echo " 7. ทดสอบ RTSP Camera"
-echo " 8. ทดสอบ PTZ Presets"
-echo " 9. ทดสอบ PTZ / Fresh / Stable Frame"
-echo "10. ตรวจ Intrinsics / HFOV"
-echo "11. ทำ Bearing Calibration"
-echo "12. ทำ Distance Calibration"
-echo "13. Verify Bearing"
-echo "14. Verify Distance"
-echo "15. รัน Full Preflight"
-echo "16. รัน Full Sweep Test"
-echo "17. ทดสอบ Telegram"
-echo "18. Enable Detection Service"
-echo "19. Enable Dashboard Service"
-echo "20. Reboot Test"
-
-echo
-echo "------------------------------------------------------------"
-
-echo
-echo "ห้ามรัน main.py เป็นขั้นทดสอบแรก"
-
-echo
-echo "หลังทุก Validation ผ่านแล้วจึงใช้:"
-echo
-echo "sudo systemctl enable smart-fire-detection.service"
-echo "sudo systemctl start smart-fire-detection.service"
-echo
-echo "sudo systemctl enable smart-fire-dashboard.service"
-echo "sudo systemctl start smart-fire-dashboard.service"
-
-echo
-echo "ตรวจสถานะ:"
-echo
-echo "systemctl status smart-fire-detection.service"
-echo "systemctl status smart-fire-dashboard.service"
-
-echo
-echo "ดู Log:"
-echo
-echo "journalctl -u smart-fire-detection.service -f"
-echo "journalctl -u smart-fire-dashboard.service -f"
-
-echo
-echo "============================================================"
-echo "Smart Fire Detection v2 Production Installer completed"
-echo "============================================================"
-echo
-
-
-exit 0
+printf '\n'
+printf '%s\n' "============================================================"
+printf '%s\n' " Smart Fire Detection v2 - Installation Complete"
+printf '%s\n' "============================================================"
+
+printf '\nProject:\n'
+printf '  %s\n' "${PROJECT_DIR}"
+
+printf '\nPython:\n'
+printf '  %s\n' "${VENV_PYTHON_VERSION}"
+
+printf '\nProduction environment:\n'
+printf '  %s\n' "${ENV_FILE}"
+
+printf '\nDetection unit:\n'
+printf '  %s\n' "${SYSTEMD_DIR}/${DETECTION_UNIT}"
+
+printf '\nDashboard unit:\n'
+printf '  %s\n' "${SYSTEMD_DIR}/${DASHBOARD_UNIT}"
+
+printf '\nIMPORTANT:\n'
+printf '%s\n' "  Production services were NOT started."
+printf '%s\n' "  Production services were NOT enabled."
+printf '%s\n' "  Calibration was NOT performed."
+
+printf '\nNext:\n'
+printf '%s\n' "  1. Configure production.env"
+printf '%s\n' "  2. Run Offline Preflight"
+printf '%s\n' "  3. Benchmark Production hardware"
+printf '%s\n' "  4. Validate Camera / PTZ / Calibration"
+printf '%s\n' "  5. Run Full Preflight"
+printf '%s\n' "  6. Run Full Sweep"
+printf '%s\n' "  7. Only then enable/start services"
+
+printf '\n'
+printf '%s\n' "Installer finished successfully."
+printf '%s\n' "============================================================"

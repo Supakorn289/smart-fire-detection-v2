@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
+# preflight.py
 
 import argparse
+import importlib.metadata
 import importlib.util
 import ipaddress
 import json
 import math
 import os
 import platform
+import shutil
 import stat
+import subprocess
 import sys
 import time
 from pathlib import Path
+
 
 from config import (
     BASE_DIR,
@@ -33,22 +38,44 @@ from config import (
 
     PRESET_PAN_DEG,
     PRESET_BEARING_DEG,
+    SWEEP_SEQUENCE,
+
+    DEG_PER_SEC,
+    PTZ_BUFFER_SEC,
+    INITIAL_PRESET_WAIT_SEC,
+    STABLE_DIFF_THRESHOLD,
+    STABLE_REQUIRED_PAIRS,
+    STABLE_TIMEOUT_SEC,
+    POST_MOVE_FRESH_FRAMES,
 
     MODEL_BACKEND,
     MODEL_PATH_PT,
     MODEL_PATH_OPENVINO,
     INFERENCE_DEVICE,
     IMGSZ,
+    STARTUP_WARMUP_RUNS,
 
     FRAMES_PER_SCAN,
     MIN_CONFIRM_FRAMES,
+    FRAME_SAMPLE_GAP_SEC,
     CLASS_THRESHOLDS,
+    CONSENSUS_IOU_THRESHOLD,
 
     GLOBAL_DISTANCE_CALIBRATION,
     SITE_CALIBRATION_FILE,
+    MIN_VALID_DISTANCE_M,
+    MAX_VALID_DISTANCE_M,
 
     TELEGRAM_TOKEN,
     TELEGRAM_CHAT_ID,
+
+    ALERT_COOLDOWN_SEC,
+    ALERT_DEDUP_IOU_THRESHOLD,
+
+    DASHBOARD_WRITE_INTERVAL_SEC,
+    HEADLESS_MODE,
+
+    validate_runtime_config,
 )
 
 
@@ -59,11 +86,13 @@ from config import (
 #
 # OFFLINE:
 #
-# - ตรวจ Software
-# - ตรวจ Configuration ที่ตรวจได้
+# - ตรวจ Python / Dependencies
+# - ตรวจ Configuration
+# - ตรวจ Deployment files
+# - ตรวจ Calibration files ที่มีอยู่
 # - ไม่โหลด AI Model จริง
 # - ไม่เชื่อม RTSP
-# - ไม่บังคับ Camera/Site
+# - ไม่สั่ง PTZ
 #
 #
 # FULL:
@@ -71,22 +100,26 @@ from config import (
 # - ตรวจ Production Environment
 # - ตรวจ Camera credentials
 # - ตรวจ Backend / Device
-# - ตรวจ Model
+# - โหลด AI Model
+# - ทดสอบ Inference ด้วย Blank Frame
 # - ตรวจ Calibration
-# - ตรวจ Camera
+# - เชื่อม RTSP และตรวจ Frame
+#
 #
 # ไฟล์นี้:
 #
-# - ไม่สั่ง PTZ
-# - ไม่แก้ Calibration
+# - ไม่สั่ง PTZ หมุน
+# - ไม่บันทึก Preset
+# - ไม่สร้าง Calibration ใหม่
 # - ไม่แก้ Environment
+# - ไม่ Start systemd service
 # - ไม่พิมพ์ Password / Token
 #
 # ============================================================
 
 
 # ============================================================
-# Constants
+# Result constants
 # ============================================================
 
 PASS = "PASS"
@@ -95,16 +128,44 @@ FAIL = "FAIL"
 SKIP = "SKIP"
 
 
+# ============================================================
+# Production paths
+# ============================================================
+
 PRODUCTION_ENV_FILE = Path(
     "/etc/smart-fire-detection/production.env"
 )
 
+SYSTEMD_DIR = Path(
+    "/etc/systemd/system"
+)
 
-# Environment ที่ Production ต้องกำหนดเอง
+DEPLOY_DIR = (
+    BASE_DIR
+    / "deploy"
+)
+
+DETECTION_UNIT_NAME = (
+    "smart-fire-detection.service"
+)
+
+DASHBOARD_UNIT_NAME = (
+    "smart-fire-dashboard.service"
+)
+
+
+# ============================================================
+# Required Production Environment Variables
+# ============================================================
 #
-# แม้ config.py จะมี safe default บางค่า
-# Production ต้องกำหนดค่าหลักแบบ Explicit
-# เพื่อป้องกันการใช้ Default โดยไม่รู้ตัว
+# ค่ากลุ่มนี้ต้องถูกกำหนด Explicit
+# บน Production Server
+#
+# CAMERA_ID ไม่บังคับ
+# เพราะ config.py สามารถประกอบ RTSP URL
+# จาก Camera configuration ได้
+#
+# ============================================================
 
 REQUIRED_PRODUCTION_ENV = [
 
@@ -123,49 +184,49 @@ REQUIRED_PRODUCTION_ENV = [
     "FRAME_HEIGHT",
     "HFOV_DEG",
 
-    # Site
-    "CAMERA_LAT",
-    "CAMERA_LON",
+    # PTZ / Frame synchronization
+    "DEG_PER_SEC",
+    "PTZ_BUFFER_SEC",
+    "INITIAL_PRESET_WAIT_SEC",
+    "STABLE_DIFF_THRESHOLD",
+    "STABLE_REQUIRED_PAIRS",
+    "STABLE_TIMEOUT_SEC",
+    "POST_MOVE_FRESH_FRAMES",
 
     # AI
     "MODEL_BACKEND",
+    "MODEL_PATH_PT",
+    "MODEL_PATH_OPENVINO",
     "INFERENCE_DEVICE",
     "IMGSZ",
+    "STARTUP_WARMUP_RUNS",
 
     # Detection
     "FIRE_THRESHOLD",
     "SMOKE_THRESHOLD",
     "FRAMES_PER_SCAN",
     "MIN_CONFIRM_FRAMES",
+    "FRAME_SAMPLE_GAP_SEC",
+    "CONSENSUS_IOU_THRESHOLD",
+
+    # Distance
+    "MIN_VALID_DISTANCE_M",
+    "MAX_VALID_DISTANCE_M",
+
+    # Site
+    "CAMERA_LAT",
+    "CAMERA_LON",
+
+    # Alert
+    "ALERT_COOLDOWN_SEC",
+    "ALERT_DEDUP_IOU_THRESHOLD",
+
+    # Dashboard
+    "DASHBOARD_WRITE_INTERVAL_SEC",
+
+    # Server
+    "HEADLESS_MODE",
 ]
-
-
-# ============================================================
-# Production AI policy
-# ============================================================
-#
-# Production Server ของ Project นี้ใช้ CPU inference
-#
-# PyTorch:
-#     INFERENCE_DEVICE=cpu
-#
-# OpenVINO:
-#     INFERENCE_DEVICE=intel:cpu
-#
-# ถ้าในอนาคตเปลี่ยน Hardware Policy
-# ให้แก้ส่วนนี้ด้วย
-# ============================================================
-
-PRODUCTION_DEVICE_POLICY = {
-
-    "pt": {
-        "cpu",
-    },
-
-    "openvino": {
-        "intel:cpu",
-    },
-}
 
 
 # ============================================================
@@ -296,7 +357,7 @@ def looks_like_placeholder(
     """
     ตรวจ Placeholder ทั่วไป
 
-    ไม่พิมพ์ค่าจริงออกหน้าจอ
+    ไม่แสดงค่าจริงออกหน้าจอ
     """
 
     text = str(
@@ -392,6 +453,235 @@ def check_python():
 
 
 # ============================================================
+# Host / Operating System
+# ============================================================
+
+def check_host(
+    offline=False,
+):
+
+    system = (
+        platform.system()
+    )
+
+    machine = (
+        platform.machine()
+        .lower()
+    )
+
+    # --------------------------------------------------------
+    # Non-Linux development host
+    # --------------------------------------------------------
+
+    if system != "Linux":
+
+        if offline:
+
+            add(
+                SKIP,
+                "Production OS",
+                (
+                    f"{system} development host "
+                    "| ตรวจ Debian 13 ตอน Deploy"
+                ),
+            )
+
+        else:
+
+            add(
+                WARN,
+                "Production OS",
+                (
+                    f"{system} "
+                    "| Full run นี้เป็น Field Test "
+                    "ไม่ใช่ Production READY"
+                ),
+            )
+
+        return
+
+
+    # --------------------------------------------------------
+    # Linux architecture
+    # --------------------------------------------------------
+
+    if machine in {
+        "x86_64",
+        "amd64",
+    }:
+
+        add(
+            PASS,
+            "Architecture",
+            machine,
+        )
+
+    else:
+
+        status = (
+            WARN
+            if offline
+            else FAIL
+        )
+
+        add(
+            status,
+            "Architecture",
+            (
+                f"{machine} "
+                "| Production target=x86_64"
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # Linux distribution
+    # --------------------------------------------------------
+
+    os_release = Path(
+        "/etc/os-release"
+    )
+
+    if not os_release.exists():
+
+        status = (
+            WARN
+            if offline
+            else FAIL
+        )
+
+        add(
+            status,
+            "Production OS",
+            "/etc/os-release not found",
+        )
+
+        return
+
+    values = {}
+
+    try:
+
+        for line in (
+            os_release
+            .read_text(
+                encoding="utf-8"
+            )
+            .splitlines()
+        ):
+
+            if (
+                "="
+                not in line
+            ):
+                continue
+
+            key, value = (
+                line.split(
+                    "=",
+                    1,
+                )
+            )
+
+            values[
+                key.strip()
+            ] = (
+                value
+                .strip()
+                .strip('"')
+            )
+
+    except OSError as exc:
+
+        add(
+            FAIL,
+            "Production OS",
+            str(
+                exc
+            ),
+        )
+
+        return
+
+    distro_id = (
+        values
+        .get(
+            "ID",
+            "",
+        )
+        .lower()
+    )
+
+    version_id = (
+        values
+        .get(
+            "VERSION_ID",
+            "",
+        )
+    )
+
+    if (
+        distro_id == "debian"
+        and
+        version_id == "13"
+    ):
+
+        add(
+            PASS,
+            "Production OS",
+            "Debian 13",
+        )
+
+    else:
+
+        status = (
+            WARN
+            if offline
+            else FAIL
+        )
+
+        add(
+            status,
+            "Production OS",
+            (
+                f"{distro_id or 'unknown'} "
+                f"{version_id or 'unknown'} "
+                "| Production baseline=Debian 13"
+            ),
+        )
+
+
+# ============================================================
+# Config validation
+# ============================================================
+
+def check_config_validation():
+
+    try:
+
+        validate_runtime_config()
+
+    except Exception as exc:
+
+        add(
+            FAIL,
+            "Runtime config validation",
+            (
+                f"{type(exc).__name__}: "
+                f"{exc}"
+            ),
+        )
+
+        return
+
+    add(
+        PASS,
+        "Runtime config validation",
+        "config.py validation passed",
+    )
+
+
+# ============================================================
 # Dependencies
 # ============================================================
 
@@ -408,6 +698,12 @@ def check_dependencies():
         "requests":
             "requests",
 
+        "PyTorch":
+            "torch",
+
+        "torchvision":
+            "torchvision",
+
         "Ultralytics":
             "ultralytics",
 
@@ -416,6 +712,9 @@ def check_dependencies():
 
         "Flask":
             "flask",
+
+        "Waitress":
+            "waitress",
     }
 
     missing = []
@@ -449,13 +748,273 @@ def check_dependencies():
             ),
         )
 
-    else:
+        return
+
+    add(
+        PASS,
+        "Dependencies",
+        "Runtime packages พร้อม",
+    )
+
+
+# ============================================================
+# Waitress
+# ============================================================
+
+def check_waitress():
+
+    # --------------------------------------------------------
+    # Python package
+    # --------------------------------------------------------
+
+    if (
+        importlib.util.find_spec(
+            "waitress"
+        )
+        is None
+    ):
 
         add(
-            PASS,
-            "Dependencies",
-            "Runtime packages พร้อม",
+            FAIL,
+            "Waitress",
+            "Python package not found",
         )
+
+        return
+
+    try:
+
+        version = (
+            importlib.metadata.version(
+                "waitress"
+            )
+        )
+
+    except Exception:
+
+        version = "unknown"
+
+    add(
+        PASS,
+        "Waitress package",
+        version,
+    )
+
+
+    # --------------------------------------------------------
+    # Console launcher
+    # --------------------------------------------------------
+
+    python_dir = (
+        Path(
+            sys.executable
+        )
+        .resolve()
+        .parent
+    )
+
+    candidates = [
+
+        python_dir
+        / "waitress-serve",
+
+        python_dir
+        / "waitress-serve.exe",
+    ]
+
+    launcher = next(
+        (
+            candidate
+            for candidate
+            in candidates
+            if candidate.exists()
+        ),
+        None,
+    )
+
+    if launcher is None:
+
+        which_path = (
+            shutil.which(
+                "waitress-serve"
+            )
+        )
+
+        if which_path:
+
+            launcher = Path(
+                which_path
+            )
+
+    if launcher is None:
+
+        add(
+            FAIL,
+            "Waitress launcher",
+            (
+                "ไม่พบ waitress-serve "
+                "ใน Python environment"
+            ),
+        )
+
+        return
+
+    add(
+        PASS,
+        "Waitress launcher",
+        launcher.name,
+    )
+
+
+# ============================================================
+# Dashboard WSGI
+# ============================================================
+
+def check_dashboard_wsgi():
+
+    try:
+
+        from app import (
+            app as flask_app
+        )
+
+    except Exception as exc:
+
+        add(
+            FAIL,
+            "Dashboard WSGI",
+            (
+                "โหลด app:app ไม่สำเร็จ "
+                f"| {type(exc).__name__}: "
+                f"{exc}"
+            ),
+        )
+
+        return
+
+
+    # --------------------------------------------------------
+    # Flask object
+    # --------------------------------------------------------
+
+    if not hasattr(
+        flask_app,
+        "wsgi_app",
+    ):
+
+        add(
+            FAIL,
+            "Dashboard WSGI",
+            (
+                "app object "
+                "ไม่ใช่ Flask WSGI application"
+            ),
+        )
+
+        return
+
+
+    # --------------------------------------------------------
+    # Required routes
+    # --------------------------------------------------------
+
+    routes = {
+        rule.rule
+        for rule
+        in flask_app.url_map.iter_rules()
+    }
+
+    required_routes = {
+        "/",
+        "/api/status",
+    }
+
+    missing_routes = (
+        required_routes
+        - routes
+    )
+
+    if missing_routes:
+
+        add(
+            FAIL,
+            "Dashboard routes",
+            (
+                "ขาด: "
+                + ", ".join(
+                    sorted(
+                        missing_routes
+                    )
+                )
+            ),
+        )
+
+        return
+
+    add(
+        PASS,
+        "Dashboard WSGI",
+        "app:app",
+    )
+
+    add(
+        PASS,
+        "Dashboard routes",
+        "/ + /api/status",
+    )
+
+
+# ============================================================
+# Deployment files
+# ============================================================
+
+def check_deployment_files():
+
+    required = [
+
+        DEPLOY_DIR
+        / "install.sh",
+
+        DEPLOY_DIR
+        / "production.env.example",
+
+        DEPLOY_DIR
+        / DETECTION_UNIT_NAME,
+
+        DEPLOY_DIR
+        / DASHBOARD_UNIT_NAME,
+    ]
+
+    missing = [
+
+        path.name
+
+        for path
+        in required
+
+        if not path.is_file()
+    ]
+
+    if missing:
+
+        add(
+            FAIL,
+            "Deployment files",
+            (
+                "ขาด: "
+                + ", ".join(
+                    missing
+                )
+            ),
+        )
+
+        return
+
+    add(
+        PASS,
+        "Deployment files",
+        "ครบ",
+    )
 
 
 # ============================================================
@@ -496,9 +1055,10 @@ def check_environment(
         )
     ]
 
-    # ========================================================
-    # ทุกค่าถูกกำหนด
-    # ========================================================
+
+    # --------------------------------------------------------
+    # Complete
+    # --------------------------------------------------------
 
     if (
         not missing
@@ -515,9 +1075,10 @@ def check_environment(
             ),
         )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # Offline
-    # ========================================================
+    # --------------------------------------------------------
 
     elif offline:
 
@@ -557,9 +1118,10 @@ def check_environment(
             ),
         )
 
-    # ========================================================
-    # FULL
-    # ========================================================
+
+    # --------------------------------------------------------
+    # Full
+    # --------------------------------------------------------
 
     else:
 
@@ -595,9 +1157,10 @@ def check_environment(
             ),
         )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # Local .env warning
-    # ========================================================
+    # --------------------------------------------------------
 
     env_file = (
         BASE_DIR
@@ -626,10 +1189,6 @@ def check_production_environment_file(
     offline=False,
 ):
 
-    # ========================================================
-    # Offline ไม่ต้องมี Production file
-    # ========================================================
-
     if offline:
 
         add(
@@ -640,9 +1199,10 @@ def check_production_environment_file(
 
         return
 
-    # ========================================================
-    # Windows / Development machine
-    # ========================================================
+
+    # --------------------------------------------------------
+    # Development / non-Linux
+    # --------------------------------------------------------
 
     if (
         platform.system()
@@ -654,15 +1214,12 @@ def check_production_environment_file(
             "Production env file",
             (
                 "Non-Linux host "
-                "| ตรวจจริงเมื่อ Deploy Debian"
+                "| ตรวจจริงบน Debian"
             ),
         )
 
         return
 
-    # ========================================================
-    # Linux Production
-    # ========================================================
 
     path = (
         PRODUCTION_ENV_FILE
@@ -694,6 +1251,7 @@ def check_production_environment_file(
 
         return
 
+
     try:
 
         info = (
@@ -713,13 +1271,14 @@ def check_production_environment_file(
 
         return
 
+
+    # --------------------------------------------------------
+    # Permissions
+    # --------------------------------------------------------
+
     mode = stat.S_IMODE(
         info.st_mode
     )
-
-    # ========================================================
-    # Group / Others ต้องไม่มี permission
-    # ========================================================
 
     if (
         mode
@@ -732,8 +1291,8 @@ def check_production_environment_file(
             (
                 f"permission="
                 f"{mode:04o} "
-                "| ต้องไม่เปิดสิทธิ์ "
-                "Group/Others"
+                "| Group/Others "
+                "ต้องไม่มีสิทธิ์"
             ),
         )
 
@@ -748,9 +1307,10 @@ def check_production_environment_file(
             ),
         )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # Root ownership
-    # ========================================================
+    # --------------------------------------------------------
 
     if (
         hasattr(
@@ -770,13 +1330,175 @@ def check_production_environment_file(
     else:
 
         add(
-            WARN,
+            FAIL,
             "Production env owner",
             (
-                "ไม่ใช่ root "
-                "| ตรวจ ownership ก่อน Production"
+                "ต้องเป็น root "
+                "บน Production"
             ),
         )
+
+
+# ============================================================
+# systemd units
+# ============================================================
+
+def check_systemd_units(
+    offline=False,
+):
+
+    if offline:
+
+        add(
+            SKIP,
+            "Installed systemd units",
+            "Offline mode",
+        )
+
+        return
+
+    if (
+        platform.system()
+        != "Linux"
+    ):
+
+        add(
+            SKIP,
+            "Installed systemd units",
+            "Non-Linux host",
+        )
+
+        return
+
+
+    detection_unit = (
+        SYSTEMD_DIR
+        / DETECTION_UNIT_NAME
+    )
+
+    dashboard_unit = (
+        SYSTEMD_DIR
+        / DASHBOARD_UNIT_NAME
+    )
+
+    missing = [
+
+        path.name
+
+        for path
+        in (
+            detection_unit,
+            dashboard_unit,
+        )
+
+        if not path.is_file()
+    ]
+
+    if missing:
+
+        add(
+            FAIL,
+            "Installed systemd units",
+            (
+                "ขาด: "
+                + ", ".join(
+                    missing
+                )
+            ),
+        )
+
+        return
+
+    add(
+        PASS,
+        "Installed systemd units",
+        "Detection + Dashboard",
+    )
+
+
+    # --------------------------------------------------------
+    # systemd-analyze verify
+    # --------------------------------------------------------
+
+    executable = (
+        shutil.which(
+            "systemd-analyze"
+        )
+    )
+
+    if not executable:
+
+        add(
+            WARN,
+            "systemd unit validation",
+            "ไม่พบ systemd-analyze",
+        )
+
+        return
+
+    try:
+
+        result = subprocess.run(
+            [
+                executable,
+                "verify",
+                str(
+                    detection_unit
+                ),
+                str(
+                    dashboard_unit
+                ),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+
+    except Exception as exc:
+
+        add(
+            FAIL,
+            "systemd unit validation",
+            (
+                f"{type(exc).__name__}: "
+                f"{exc}"
+            ),
+        )
+
+        return
+
+    if result.returncode == 0:
+
+        add(
+            PASS,
+            "systemd unit validation",
+            "systemd-analyze verify passed",
+        )
+
+        return
+
+    detail = (
+        result.stderr.strip()
+        or result.stdout.strip()
+        or (
+            f"returncode="
+            f"{result.returncode}"
+        )
+    )
+
+    first_line = (
+        detail.splitlines()[0]
+        if detail
+        else "validation failed"
+    )
+
+    add(
+        FAIL,
+        "systemd unit validation",
+        first_line,
+    )
 
 
 # ============================================================
@@ -798,10 +1520,6 @@ def check_camera_credentials(
             CAMERA_PWD
         )
     )
-
-    # ========================================================
-    # ยังไม่ได้กำหนด
-    # ========================================================
 
     if (
         not user_ready
@@ -834,9 +1552,6 @@ def check_camera_credentials(
 
         return
 
-    # ========================================================
-    # Placeholder
-    # ========================================================
 
     user_placeholder = (
         looks_like_placeholder(
@@ -880,10 +1595,6 @@ def check_camera_credentials(
 
         return
 
-    # ========================================================
-    # PASS
-    # ========================================================
-
     add(
         PASS,
         "Camera credentials",
@@ -916,9 +1627,10 @@ def check_backend_device():
         .lower()
     )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # Backend
-    # ========================================================
+    # --------------------------------------------------------
 
     if backend not in {
         "pt",
@@ -942,9 +1654,10 @@ def check_backend_device():
         backend,
     )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # Device empty
-    # ========================================================
+    # --------------------------------------------------------
 
     if not device:
 
@@ -956,51 +1669,103 @@ def check_backend_device():
 
         return False
 
-    # ========================================================
-    # Production policy
-    # ========================================================
 
-    allowed = (
-        PRODUCTION_DEVICE_POLICY[
-            backend
-        ]
-    )
+    # --------------------------------------------------------
+    # PyTorch production baseline
+    # --------------------------------------------------------
 
-    if device not in allowed:
+    if backend == "pt":
+
+        if device != "cpu":
+
+            add(
+                FAIL,
+                "Inference device",
+                (
+                    f"pt -> {device} "
+                    "| Production baseline "
+                    "ต้องใช้ CPU"
+                ),
+            )
+
+            return False
 
         add(
-            FAIL,
+            PASS,
+            "Inference device",
+            "pt -> cpu",
+        )
+
+        return True
+
+
+    # --------------------------------------------------------
+    # OpenVINO
+    # --------------------------------------------------------
+    #
+    # ไม่ hard-code Device String
+    # เป็น intel:cpu
+    #
+    # Preferred baseline:
+    #
+    #     INFERENCE_DEVICE=cpu
+    #
+    # หากใช้รูปแบบอื่นที่มีคำว่า cpu
+    # จะให้ Full AI inference เป็นตัวตัดสิน
+    #
+    # --------------------------------------------------------
+
+    if device == "cpu":
+
+        add(
+            PASS,
             "Inference device",
             (
-                f"backend={backend} "
-                f"| device={device} "
-                "| ไม่ตรง Production CPU policy"
+                "openvino -> cpu "
+                "| validate again by inference"
             ),
         )
 
-        return False
+        return True
+
+    if "cpu" in device:
+
+        add(
+            WARN,
+            "Inference device",
+            (
+                f"openvino -> {device} "
+                "| exact syntax จะถูกตรวจ "
+                "ด้วย Full AI inference"
+            ),
+        )
+
+        return True
 
     add(
-        PASS,
+        FAIL,
         "Inference device",
         (
-            f"{backend} -> "
-            f"{device}"
+            f"openvino -> {device} "
+            "| Production baseline "
+            "ต้องใช้ CPU"
         ),
     )
 
-    return True
+    return False
 
 
 # ============================================================
-# Runtime parameters
+# Runtime Parameters
 # ============================================================
 
-def check_runtime_parameters():
+def check_runtime_parameters(
+    offline=False,
+):
 
-    # ========================================================
+    # --------------------------------------------------------
     # Camera HTTP port
-    # ========================================================
+    # --------------------------------------------------------
 
     if (
         1
@@ -1021,15 +1786,15 @@ def check_runtime_parameters():
         add(
             FAIL,
             "Camera HTTP port",
-            (
-                f"ค่าผิดปกติ: "
-                f"{CAMERA_PORT}"
+            str(
+                CAMERA_PORT
             ),
         )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # RTSP port
-    # ========================================================
+    # --------------------------------------------------------
 
     if (
         1
@@ -1050,15 +1815,15 @@ def check_runtime_parameters():
         add(
             FAIL,
             "RTSP port",
-            (
-                f"ค่าผิดปกติ: "
-                f"{RTSP_PORT}"
+            str(
+                RTSP_PORT
             ),
         )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # RTSP path
-    # ========================================================
+    # --------------------------------------------------------
 
     if (
         str(
@@ -1085,11 +1850,12 @@ def check_runtime_parameters():
             ),
         )
 
-    # ========================================================
-    # IMGSZ
-    # ========================================================
 
-    if IMGSZ > 0:
+    # --------------------------------------------------------
+    # AI image size
+    # --------------------------------------------------------
+
+    if IMGSZ >= 32:
 
         add(
             PASS,
@@ -1104,16 +1870,54 @@ def check_runtime_parameters():
         add(
             FAIL,
             "AI image size",
-            str(
-                IMGSZ
+            (
+                f"{IMGSZ} "
+                "| ต้อง >= 32"
             ),
         )
 
-    # ========================================================
-    # Frames / Scan
-    # ========================================================
 
-    if FRAMES_PER_SCAN < 1:
+    # --------------------------------------------------------
+    # AI warm-up
+    # --------------------------------------------------------
+
+    if STARTUP_WARMUP_RUNS >= 0:
+
+        add(
+            PASS,
+            "AI startup warm-up",
+            str(
+                STARTUP_WARMUP_RUNS
+            ),
+        )
+
+    else:
+
+        add(
+            FAIL,
+            "AI startup warm-up",
+            (
+                "STARTUP_WARMUP_RUNS "
+                "ต้อง >= 0"
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # Frames / scan
+    # --------------------------------------------------------
+
+    if FRAMES_PER_SCAN >= 1:
+
+        add(
+            PASS,
+            "Frames per scan",
+            str(
+                FRAMES_PER_SCAN
+            ),
+        )
+
+    else:
 
         add(
             FAIL,
@@ -1124,19 +1928,10 @@ def check_runtime_parameters():
             ),
         )
 
-    else:
 
-        add(
-            PASS,
-            "Frames per scan",
-            str(
-                FRAMES_PER_SCAN
-            ),
-        )
-
-    # ========================================================
-    # Consensus confirm frames
-    # ========================================================
+    # --------------------------------------------------------
+    # Confirmation frames
+    # --------------------------------------------------------
 
     if (
         1
@@ -1167,9 +1962,41 @@ def check_runtime_parameters():
             ),
         )
 
-    # ========================================================
-    # Class thresholds
-    # ========================================================
+
+    # --------------------------------------------------------
+    # Frame sample gap
+    # --------------------------------------------------------
+
+    if (
+        finite(
+            FRAME_SAMPLE_GAP_SEC
+        )
+        and
+        FRAME_SAMPLE_GAP_SEC >= 0.0
+    ):
+
+        add(
+            PASS,
+            "Frame sample gap",
+            (
+                f"{FRAME_SAMPLE_GAP_SEC:.3f}s"
+            ),
+        )
+
+    else:
+
+        add(
+            FAIL,
+            "Frame sample gap",
+            str(
+                FRAME_SAMPLE_GAP_SEC
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # Fire / Smoke thresholds
+    # --------------------------------------------------------
 
     for (
         class_name,
@@ -1213,17 +2040,302 @@ def check_runtime_parameters():
             )
 
 
+    # --------------------------------------------------------
+    # Consensus IoU
+    # --------------------------------------------------------
+
+    if (
+        finite(
+            CONSENSUS_IOU_THRESHOLD
+        )
+        and
+        0.0
+        <= CONSENSUS_IOU_THRESHOLD
+        <= 1.0
+    ):
+
+        add(
+            PASS,
+            "Consensus IoU",
+            (
+                f"{CONSENSUS_IOU_THRESHOLD:.2f}"
+            ),
+        )
+
+    else:
+
+        add(
+            FAIL,
+            "Consensus IoU",
+            str(
+                CONSENSUS_IOU_THRESHOLD
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # PTZ / Frame synchronization
+    # --------------------------------------------------------
+
+    ptz_timing_ok = (
+
+        finite(
+            DEG_PER_SEC
+        )
+        and
+        DEG_PER_SEC > 0.0
+
+        and
+
+        finite(
+            PTZ_BUFFER_SEC
+        )
+        and
+        PTZ_BUFFER_SEC >= 0.0
+
+        and
+
+        finite(
+            INITIAL_PRESET_WAIT_SEC
+        )
+        and
+        INITIAL_PRESET_WAIT_SEC >= 0.0
+
+        and
+
+        finite(
+            STABLE_DIFF_THRESHOLD
+        )
+        and
+        STABLE_DIFF_THRESHOLD >= 0.0
+
+        and
+
+        STABLE_REQUIRED_PAIRS >= 1
+
+        and
+
+        finite(
+            STABLE_TIMEOUT_SEC
+        )
+        and
+        STABLE_TIMEOUT_SEC > 0.0
+
+        and
+
+        POST_MOVE_FRESH_FRAMES >= 1
+    )
+
+    if ptz_timing_ok:
+
+        add(
+            PASS,
+            "PTZ/frame timing",
+            (
+                f"speed="
+                f"{DEG_PER_SEC:.2f}deg/s "
+                f"| buffer="
+                f"{PTZ_BUFFER_SEC:.2f}s "
+                f"| stablePairs="
+                f"{STABLE_REQUIRED_PAIRS}"
+            ),
+        )
+
+    else:
+
+        add(
+            FAIL,
+            "PTZ/frame timing",
+            (
+                "PTZ / stability "
+                "configuration ไม่ถูกต้อง"
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # Valid distance range
+    # --------------------------------------------------------
+
+    if (
+        finite(
+            MIN_VALID_DISTANCE_M
+        )
+        and
+        finite(
+            MAX_VALID_DISTANCE_M
+        )
+        and
+        MIN_VALID_DISTANCE_M > 0.0
+        and
+        MAX_VALID_DISTANCE_M
+        > MIN_VALID_DISTANCE_M
+    ):
+
+        add(
+            PASS,
+            "Valid distance range",
+            (
+                f"{MIN_VALID_DISTANCE_M:.2f}"
+                "-"
+                f"{MAX_VALID_DISTANCE_M:.2f}m"
+            ),
+        )
+
+    else:
+
+        add(
+            FAIL,
+            "Valid distance range",
+            (
+                "MIN/MAX_VALID_DISTANCE_M "
+                "ไม่ถูกต้อง"
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # Alert cooldown
+    # --------------------------------------------------------
+
+    if (
+        finite(
+            ALERT_COOLDOWN_SEC
+        )
+        and
+        ALERT_COOLDOWN_SEC >= 0.0
+    ):
+
+        add(
+            PASS,
+            "Alert cooldown",
+            (
+                f"{ALERT_COOLDOWN_SEC:.1f}s"
+            ),
+        )
+
+    else:
+
+        add(
+            FAIL,
+            "Alert cooldown",
+            str(
+                ALERT_COOLDOWN_SEC
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # Alert dedup IoU
+    # --------------------------------------------------------
+
+    if (
+        finite(
+            ALERT_DEDUP_IOU_THRESHOLD
+        )
+        and
+        0.0
+        <= ALERT_DEDUP_IOU_THRESHOLD
+        <= 1.0
+    ):
+
+        add(
+            PASS,
+            "Alert dedup IoU",
+            (
+                f"{ALERT_DEDUP_IOU_THRESHOLD:.2f}"
+            ),
+        )
+
+    else:
+
+        add(
+            FAIL,
+            "Alert dedup IoU",
+            str(
+                ALERT_DEDUP_IOU_THRESHOLD
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # Dashboard write interval
+    # --------------------------------------------------------
+
+    if (
+        finite(
+            DASHBOARD_WRITE_INTERVAL_SEC
+        )
+        and
+        DASHBOARD_WRITE_INTERVAL_SEC > 0.0
+    ):
+
+        add(
+            PASS,
+            "Dashboard write interval",
+            (
+                f"{DASHBOARD_WRITE_INTERVAL_SEC:.2f}s"
+            ),
+        )
+
+    else:
+
+        add(
+            FAIL,
+            "Dashboard write interval",
+            str(
+                DASHBOARD_WRITE_INTERVAL_SEC
+            ),
+        )
+
+
+    # --------------------------------------------------------
+    # Headless
+    # --------------------------------------------------------
+
+    if HEADLESS_MODE:
+
+        add(
+            PASS,
+            "Headless mode",
+            "Enabled",
+        )
+
+    elif offline:
+
+        add(
+            WARN,
+            "Headless mode",
+            (
+                "Disabled "
+                "| Production Server "
+                "ควรใช้ HEADLESS_MODE=1"
+            ),
+        )
+
+    else:
+
+        add(
+            FAIL,
+            "Headless mode",
+            (
+                "Production Server "
+                "ต้องใช้ HEADLESS_MODE=1"
+            ),
+        )
+
+
 # ============================================================
-# Basic Camera / Site configuration
+# Camera / Site configuration
 # ============================================================
 
 def check_config(
     offline=False,
 ):
 
-    # ========================================================
+    # --------------------------------------------------------
     # Resolution
-    # ========================================================
+    # --------------------------------------------------------
 
     if (
         FRAME_WIDTH > 0
@@ -1253,18 +2365,19 @@ def check_config(
             ),
         )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # HFOV
-    # ========================================================
+    # --------------------------------------------------------
 
     if (
         finite(
             HFOV_DEG
         )
         and
-        0
+        0.0
         < HFOV_DEG
-        < 180
+        < 180.0
     ):
 
         add(
@@ -1285,9 +2398,10 @@ def check_config(
             ),
         )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # Camera coordinates
-    # ========================================================
+    # --------------------------------------------------------
 
     coordinates_valid = (
 
@@ -1303,15 +2417,15 @@ def check_config(
 
         and
 
-        -90
+        -90.0
         <= CAMERA_LAT
-        <= 90
+        <= 90.0
 
         and
 
-        -180
+        -180.0
         <= CAMERA_LON
-        <= 180
+        <= 180.0
     )
 
     if coordinates_valid:
@@ -1325,33 +2439,32 @@ def check_config(
             ),
         )
 
+    elif offline:
+
+        add(
+            SKIP,
+            "Camera coordinates",
+            (
+                "ยังไม่ได้กำหนด Site GPS "
+                "| ต้องตั้งเมื่อ Deploy Site จริง"
+            ),
+        )
+
     else:
 
-        if offline:
+        add(
+            FAIL,
+            "Camera coordinates",
+            (
+                "CAMERA_LAT / CAMERA_LON "
+                "ยังไม่ถูกต้อง"
+            ),
+        )
 
-            add(
-                SKIP,
-                "Camera coordinates",
-                (
-                    "ยังไม่ได้กำหนด Site GPS "
-                    "| ต้องตั้งเมื่อ Deploy Site จริง"
-                ),
-            )
 
-        else:
-
-            add(
-                FAIL,
-                "Camera coordinates",
-                (
-                    "CAMERA_LAT / CAMERA_LON "
-                    "ยังไม่ถูกต้อง"
-                ),
-            )
-
-    # ========================================================
-    # PTZ Presets
-    # ========================================================
+    # --------------------------------------------------------
+    # PTZ preset config
+    # --------------------------------------------------------
 
     expected_presets = set(
         range(
@@ -1374,16 +2487,29 @@ def check_config(
         == expected_presets
     )
 
+    sweep_ok = all(
+        preset
+        in expected_presets
+
+        for preset
+        in SWEEP_SEQUENCE
+    )
+
     if (
         pan_ok
         and
         bearing_ok
+        and
+        sweep_ok
     ):
 
         add(
             PASS,
             "PTZ preset config",
-            "Preset 1-9 ครบ",
+            (
+                "Preset 1-9 ครบ "
+                "| Sweep valid"
+            ),
         )
 
     else:
@@ -1391,12 +2517,16 @@ def check_config(
         add(
             FAIL,
             "PTZ preset config",
-            "Preset 1-9 ไม่ครบ",
+            (
+                "Preset / Sweep "
+                "configuration ไม่ถูกต้อง"
+            ),
         )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # Camera IP
-    # ========================================================
+    # --------------------------------------------------------
 
     camera_ip_text = (
         str(
@@ -1462,9 +2592,10 @@ def check_config(
                 ),
             )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # RTSP config
-    # ========================================================
+    # --------------------------------------------------------
 
     if camera_ip_valid:
 
@@ -1472,8 +2603,10 @@ def check_config(
             PASS,
             "RTSP config",
             (
-                f"port={RTSP_PORT} "
-                f"| path={RTSP_PATH}"
+                f"port="
+                f"{RTSP_PORT} "
+                f"| path="
+                f"{RTSP_PATH}"
             ),
         )
 
@@ -1497,9 +2630,10 @@ def check_config(
             "Camera IP ไม่พร้อม",
         )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # PTZ HTTP config
-    # ========================================================
+    # --------------------------------------------------------
 
     if camera_ip_valid:
 
@@ -1666,8 +2800,7 @@ def check_bearing(
                 (
                     "ยังไม่มี site.json "
                     "| ต้อง Calibration "
-                    "เมื่อเชื่อมกล้อง/"
-                    "ติดตั้ง Site จริง"
+                    "ที่ Site จริง"
                 ),
             )
 
@@ -1678,8 +2811,7 @@ def check_bearing(
                 "Bearing calibration",
                 (
                     "ไม่พบ site.json "
-                    "-> รัน "
-                    "calibrate_bearing.py"
+                    "-> รัน calibrate_bearing.py"
                 ),
             )
 
@@ -1713,6 +2845,11 @@ def check_bearing(
         )
 
         return
+
+
+    # --------------------------------------------------------
+    # Saved resolution
+    # --------------------------------------------------------
 
     saved_width = (
         data.get(
@@ -1780,6 +2917,7 @@ def check_bearing(
 
             return
 
+
     add(
         PASS,
         "Bearing calibration",
@@ -1814,8 +2952,7 @@ def check_distance(
                     "ยังไม่มี "
                     "distance_global.json "
                     "| ต้อง Calibration "
-                    "เมื่อเชื่อมกล้อง/"
-                    "มีพื้นที่ทดสอบจริง"
+                    "ที่ Site จริง"
                 ),
             )
 
@@ -1841,6 +2978,7 @@ def check_distance(
     if data is None:
 
         return
+
 
     required = [
 
@@ -1876,9 +3014,10 @@ def check_distance(
 
         return
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # H / K
-    # ========================================================
+    # --------------------------------------------------------
 
     if not finite(
         data.get(
@@ -1908,9 +3047,10 @@ def check_distance(
 
         return
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # Resolution
-    # ========================================================
+    # --------------------------------------------------------
 
     try:
 
@@ -1964,9 +3104,10 @@ def check_distance(
 
         return
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # Points
-    # ========================================================
+    # --------------------------------------------------------
 
     try:
 
@@ -2005,9 +3146,10 @@ def check_distance(
 
         return
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # Detail
-    # ========================================================
+    # --------------------------------------------------------
 
     detail = (
         f"{points} points"
@@ -2148,13 +3290,12 @@ def check_model(
         "openvino",
     }:
 
-        # Backend ถูก Report ไปแล้ว
-        # ใน check_backend_device()
         return
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # Model path
-    # ========================================================
+    # --------------------------------------------------------
 
     if backend == "pt":
 
@@ -2167,6 +3308,11 @@ def check_model(
         model_path = Path(
             MODEL_PATH_OPENVINO
         )
+
+
+        # ----------------------------------------------------
+        # OpenVINO package
+        # ----------------------------------------------------
 
         if (
             importlib.util.find_spec(
@@ -2183,15 +3329,30 @@ def check_model(
 
             return
 
+        try:
+
+            openvino_version = (
+                importlib.metadata.version(
+                    "openvino"
+                )
+            )
+
+        except Exception:
+
+            openvino_version = (
+                "available"
+            )
+
         add(
             PASS,
             "OpenVINO package",
-            "Available",
+            openvino_version,
         )
 
-    # ========================================================
-    # Path exists
-    # ========================================================
+
+    # --------------------------------------------------------
+    # Model path exists
+    # --------------------------------------------------------
 
     if not model_path.exists():
 
@@ -2199,7 +3360,8 @@ def check_model(
             FAIL,
             "AI model",
             (
-                "ไม่พบ Model Path"
+                "ไม่พบ Model Path "
+                f"| backend={backend}"
             ),
         )
 
@@ -2214,9 +3376,10 @@ def check_model(
         ),
     )
 
-    # ========================================================
+
+    # --------------------------------------------------------
     # Offline
-    # ========================================================
+    # --------------------------------------------------------
 
     if not load_model:
 
@@ -2226,16 +3389,34 @@ def check_model(
             "Offline mode",
         )
 
+        add(
+            SKIP,
+            "AI inference",
+            "Offline mode",
+        )
+
         return
 
-    # ========================================================
-    # Load Model
-    # ========================================================
+
+    # --------------------------------------------------------
+    # Load + class validation + inference
+    # --------------------------------------------------------
 
     try:
 
+        import numpy as np
+
         from ultralytics import (
             YOLO
+        )
+
+
+        # ----------------------------------------------------
+        # Model load
+        # ----------------------------------------------------
+
+        load_start = (
+            time.perf_counter()
         )
 
         model = YOLO(
@@ -2243,6 +3424,24 @@ def check_model(
                 model_path
             )
         )
+
+        load_ms = (
+            time.perf_counter()
+            - load_start
+        ) * 1000.0
+
+        add(
+            PASS,
+            "AI model load",
+            (
+                f"{load_ms:.1f} ms"
+            ),
+        )
+
+
+        # ----------------------------------------------------
+        # Classes
+        # ----------------------------------------------------
 
         names_object = (
             model.names
@@ -2257,6 +3456,7 @@ def check_model(
                 str(
                     value
                 ).strip().lower()
+
                 for value
                 in names_object.values()
             }
@@ -2267,6 +3467,7 @@ def check_model(
                 str(
                     value
                 ).strip().lower()
+
                 for value
                 in names_object
             }
@@ -2314,11 +3515,89 @@ def check_model(
                 ),
             )
 
+            return
+
+
+        # ----------------------------------------------------
+        # Safe synthetic inference smoke test
+        # ----------------------------------------------------
+        #
+        # ใช้ภาพดำที่สร้างใน Memory เท่านั้น
+        #
+        # ทดสอบเฉพาะว่า:
+        #
+        # Model + Backend + Device + IMGSZ
+        #
+        # สามารถ Inference ได้จริง
+        #
+        # ไม่ใช่ Accuracy Test
+        #
+        # ----------------------------------------------------
+
+        frame = np.zeros(
+            (
+                FRAME_HEIGHT,
+                FRAME_WIDTH,
+                3,
+            ),
+            dtype=np.uint8,
+        )
+
+        confidence = min(
+            float(
+                value
+            )
+
+            for value
+            in CLASS_THRESHOLDS.values()
+        )
+
+        inference_start = (
+            time.perf_counter()
+        )
+
+        prediction = model.predict(
+            source=frame,
+            imgsz=IMGSZ,
+            conf=confidence,
+            device=INFERENCE_DEVICE,
+            verbose=False,
+        )
+
+        inference_ms = (
+            time.perf_counter()
+            - inference_start
+        ) * 1000.0
+
+        if prediction is None:
+
+            add(
+                FAIL,
+                "AI inference",
+                (
+                    "model.predict() "
+                    "ไม่คืนผลลัพธ์"
+                ),
+            )
+
+            return
+
+        add(
+            PASS,
+            "AI inference",
+            (
+                f"backend={backend} "
+                f"| device={INFERENCE_DEVICE} "
+                f"| {inference_ms:.1f} ms"
+            ),
+        )
+
+
     except Exception as exc:
 
         add(
             FAIL,
-            "AI model load",
+            "AI model/inference",
             (
                 f"{type(exc).__name__}: "
                 f"{exc}"
@@ -2372,6 +3651,11 @@ def check_camera(
 
         return
 
+
+    # --------------------------------------------------------
+    # Connect without PTZ movement
+    # --------------------------------------------------------
+
     try:
 
         from camera import (
@@ -2414,9 +3698,10 @@ def check_camera(
                     0.1
                 )
 
-            # =================================================
+
+            # ------------------------------------------------
             # Timeout
-            # =================================================
+            # ------------------------------------------------
 
             if packet is None:
 
@@ -2431,9 +3716,10 @@ def check_camera(
 
                 return
 
-            # =================================================
+
+            # ------------------------------------------------
             # Resolution
-            # =================================================
+            # ------------------------------------------------
 
             height, width = (
                 packet.frame.shape[
@@ -2464,9 +3750,10 @@ def check_camera(
 
                 return
 
-            # =================================================
+
+            # ------------------------------------------------
             # Frame age
-            # =================================================
+            # ------------------------------------------------
 
             try:
 
@@ -2568,6 +3855,7 @@ def summary(
         in results
     )
 
+
     print()
 
     print(
@@ -2602,9 +3890,10 @@ def summary(
         "-" * 72
     )
 
-    # ========================================================
-    # FAIL
-    # ========================================================
+
+    # --------------------------------------------------------
+    # Fail
+    # --------------------------------------------------------
 
     if fail_count:
 
@@ -2630,15 +3919,16 @@ def summary(
             print(
                 (
                     "แก้รายการ FAIL "
-                    "ก่อนรัน main.py"
+                    "ก่อนรัน Production Runtime"
                 )
             )
 
         return 1
 
-    # ========================================================
-    # OFFLINE
-    # ========================================================
+
+    # --------------------------------------------------------
+    # Offline
+    # --------------------------------------------------------
 
     if offline:
 
@@ -2671,9 +3961,10 @@ def summary(
 
         return 0
 
-    # ========================================================
-    # FULL on non-Linux
-    # ========================================================
+
+    # --------------------------------------------------------
+    # Full on non-Linux
+    # --------------------------------------------------------
 
     if (
         platform.system()
@@ -2709,9 +4000,10 @@ def summary(
 
         return 0
 
-    # ========================================================
-    # FULL on Linux Production
-    # ========================================================
+
+    # --------------------------------------------------------
+    # Full on Linux Production
+    # --------------------------------------------------------
 
     if warn_count:
 
@@ -2739,6 +4031,11 @@ def main():
 
     results.clear()
 
+
+    # --------------------------------------------------------
+    # CLI
+    # --------------------------------------------------------
+
     parser = argparse.ArgumentParser(
         description=(
             "Smart Fire Detection v2 "
@@ -2750,8 +4047,19 @@ def main():
         "--offline",
         action="store_true",
         help=(
-            "ตรวจ Software โดยไม่โหลด "
-            "AI Model จริงและไม่เชื่อม RTSP"
+            "ตรวจ Software/Configuration "
+            "โดยไม่โหลด AI Model จริง "
+            "และไม่เชื่อม RTSP"
+        ),
+    )
+
+    parser.add_argument(
+        "--camera-timeout",
+        type=float,
+        default=10.0,
+        help=(
+            "RTSP timeout สำหรับ Full mode "
+            "(default: 10 seconds)"
         ),
     )
 
@@ -2759,9 +4067,22 @@ def main():
         parser.parse_args()
     )
 
-    # ========================================================
+    if (
+        not math.isfinite(
+            args.camera_timeout
+        )
+        or
+        args.camera_timeout <= 0
+    ):
+
+        parser.error(
+            "--camera-timeout must be > 0"
+        )
+
+
+    # --------------------------------------------------------
     # Header
-    # ========================================================
+    # --------------------------------------------------------
 
     print(
         "=" * 72
@@ -2769,7 +4090,7 @@ def main():
 
     print(
         "Smart Fire Detection v2 "
-        "- Preflight"
+        "- Production Preflight"
     )
 
     print(
@@ -2780,6 +4101,11 @@ def main():
         f"OS      : "
         f"{platform.system()} "
         f"{platform.release()}"
+    )
+
+    print(
+        f"Python  : "
+        f"{platform.python_version()}"
     )
 
     print(
@@ -2798,20 +4124,34 @@ def main():
 
     print(
         "PTZ     : "
-        "ไม่สั่งกล้องหมุน"
+        "NO MOVEMENT"
     )
 
     print(
         "=" * 72
     )
 
+
     # ========================================================
-    # Software
+    # Software / host
     # ========================================================
 
     check_python()
 
+    check_host(
+        offline=args.offline
+    )
+
+    check_config_validation()
+
     check_dependencies()
+
+    check_waitress()
+
+    check_dashboard_wsgi()
+
+    check_deployment_files()
+
 
     # ========================================================
     # Production Environment
@@ -2825,6 +4165,11 @@ def main():
         offline=args.offline
     )
 
+    check_systemd_units(
+        offline=args.offline
+    )
+
+
     # ========================================================
     # Credentials
     # ========================================================
@@ -2833,31 +4178,38 @@ def main():
         offline=args.offline
     )
 
+
     # ========================================================
-    # AI Backend / Device
+    # Backend / Device
     # ========================================================
 
     check_backend_device()
+
 
     # ========================================================
     # Runtime Parameters
     # ========================================================
 
-    check_runtime_parameters()
+    check_runtime_parameters(
+        offline=args.offline
+    )
+
 
     # ========================================================
-    # Basic Config
+    # Basic Configuration
     # ========================================================
 
     check_config(
         offline=args.offline
     )
 
+
     # ========================================================
     # Camera Geometry
     # ========================================================
 
     check_intrinsics()
+
 
     # ========================================================
     # Site Calibration
@@ -2871,11 +4223,13 @@ def main():
         offline=args.offline
     )
 
+
     # ========================================================
     # Notification
     # ========================================================
 
     check_telegram()
+
 
     # ========================================================
     # AI Model
@@ -2887,8 +4241,9 @@ def main():
         )
     )
 
+
     # ========================================================
-    # RTSP
+    # Camera / RTSP
     # ========================================================
 
     if args.offline:
@@ -2901,7 +4256,12 @@ def main():
 
     else:
 
-        check_camera()
+        check_camera(
+            timeout=(
+                args.camera_timeout
+            )
+        )
+
 
     # ========================================================
     # Summary
@@ -2911,6 +4271,10 @@ def main():
         offline=args.offline
     )
 
+
+# ============================================================
+# Entry point
+# ============================================================
 
 if __name__ == "__main__":
 

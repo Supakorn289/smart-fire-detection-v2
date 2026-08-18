@@ -19,7 +19,7 @@ psutil>=5.9
 Flask>=3.0
 
 # Production WSGI server for Dashboard
-waitress>=3.0
+waitress==3.0.2
 
 
 # ============================================================

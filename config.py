@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+# config.py
 
+import math
 import os
 from pathlib import Path
 
@@ -17,6 +19,14 @@ BASE_DIR = Path(
 # Environment helpers
 # ============================================================
 
+
+class ConfigError(ValueError):
+    """
+    Error สำหรับ Configuration ที่มีค่าผิดรูปแบบ
+    หรือไม่อยู่ในช่วงที่ระบบรองรับ
+    """
+
+
 def env_text(
     name,
     default="",
@@ -25,41 +35,145 @@ def env_text(
     อ่าน Environment Variable แบบข้อความ
 
     ใช้ strip() กับค่าทั่วไป
-    แต่ไม่ควรใช้กับ Password
+
+    ค่าอย่าง Password ที่ whitespace อาจมีความหมาย
+    ให้ใช้ os.getenv() โดยตรงแทน
     """
 
-    return (
-        os.getenv(
-            name,
-            default,
-        )
-        .strip()
+    value = os.getenv(
+        name,
+        default,
     )
+
+    if value is None:
+        value = ""
+
+    return str(
+        value
+    ).strip()
 
 
 def env_int(
     name,
     default,
 ):
+    """
+    อ่าน Environment Variable แบบ Integer
 
-    return int(
-        os.getenv(
-            name,
-            str(default),
-        )
+    ถ้าค่าไม่สามารถแปลงเป็น Integer ได้
+    จะแจ้งชื่อ Environment Variable ที่ผิดโดยตรง
+    """
+
+    raw = os.getenv(
+        name,
+        str(default),
     )
+
+    try:
+
+        return int(
+            str(raw).strip()
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
+
+        raise ConfigError(
+            f"Invalid integer environment variable "
+            f"{name}={raw!r}"
+        ) from exc
 
 
 def env_float(
     name,
     default,
 ):
+    """
+    อ่าน Environment Variable แบบ Float
 
-    return float(
-        os.getenv(
-            name,
-            str(default),
+    รองรับค่า nan โดยตั้งใจ
+    เพราะ CAMERA_LAT / CAMERA_LON ใช้ nan
+    ก่อนกำหนดตำแหน่ง Site จริง
+    """
+
+    raw = os.getenv(
+        name,
+        str(default),
+    )
+
+    try:
+
+        return float(
+            str(raw).strip()
         )
+
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
+
+        raise ConfigError(
+            f"Invalid float environment variable "
+            f"{name}={raw!r}"
+        ) from exc
+
+
+def env_bool(
+    name,
+    default=False,
+):
+    """
+    อ่าน Environment Variable แบบ Boolean
+
+    True:
+        1
+        true
+        yes
+        on
+
+    False:
+        0
+        false
+        no
+        off
+    """
+
+    default_text = (
+        "1"
+        if default
+        else "0"
+    )
+
+    raw = env_text(
+        name,
+        default_text,
+    ).lower()
+
+    if raw in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+
+        return True
+
+    if raw in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+
+        return False
+
+    raise ConfigError(
+        f"Invalid boolean environment variable "
+        f"{name}={raw!r}; "
+        f"expected one of "
+        f"1/0, true/false, yes/no, on/off"
     )
 
 
@@ -68,15 +182,17 @@ def env_path(
     default,
 ):
     """
-    Path จาก Environment
+    อ่าน Path จาก Environment
 
-    ถ้าเป็น Relative Path:
+    ถ้าเป็น Relative Path เช่น:
+
         models/fire.pt
 
     จะ Resolve จาก BASE_DIR เป็น:
+
         <project>/models/fire.pt
 
-    ทำให้ไม่ขึ้นกับ Current Working Directory
+    ทำให้ Path ไม่ขึ้นกับ Current Working Directory
     """
 
     raw = env_text(
@@ -145,10 +261,18 @@ RTSP_PATH = env_text(
 # สามารถกำหนด CAMERA_ID เองได้
 #
 # เช่น:
+#
 # CAMERA_ID=rtsp://...
 #
 # ถ้าไม่ได้กำหนด
-# ระบบจะประกอบจากค่าด้านบน
+# ระบบจะประกอบ URL จาก:
+#
+# CAMERA_USER
+# CAMERA_PWD
+# CAMERA_IP
+# RTSP_PORT
+# RTSP_PATH
+#
 # ============================================================
 
 CAMERA_ID = env_text(
@@ -196,14 +320,16 @@ FRAME_HEIGHT = env_int(
 # ค่านี้เป็น Camera Geometry
 # ไม่ใช่ Secret
 #
-# แต่ถ้าเปลี่ยน:
+# หากเปลี่ยน:
+#
 # - Camera
 # - Lens
 # - Optical Zoom
-# - Crop
+# - Digital Crop
 # - Resolution
 #
 # ต้องตรวจ Calibration ใหม่
+#
 # ============================================================
 
 HFOV_DEG = env_float(
@@ -217,6 +343,7 @@ HFOV_DEG = env_float(
 # ============================================================
 
 # Physical pan coordinates
+#
 # -177.5 .. +177.5
 
 PRESET_PAN_DEG = {
@@ -251,6 +378,10 @@ PRESET_BEARING_DEG = {
     9: 182.5,
 }
 
+
+# ============================================================
+# PTZ Sweep
+# ============================================================
 
 SWEEP_SEQUENCE = [
     1,
@@ -359,6 +490,24 @@ IMGSZ = env_int(
 
 
 # ============================================================
+# AI Startup
+# ============================================================
+#
+# Warm-up ทำเพียงครั้งเดียว
+# ตอน Production Runtime เริ่มต้น
+#
+# main.py ต้อง Import ค่านี้จาก config.py
+# ห้ามอ่าน os.getenv() ซ้ำใน main.py
+#
+# ============================================================
+
+STARTUP_WARMUP_RUNS = env_int(
+    "STARTUP_WARMUP_RUNS",
+    3,
+)
+
+
+# ============================================================
 # Detection
 # ============================================================
 
@@ -411,6 +560,12 @@ CLASS_ALIASES = {
 
 # ============================================================
 # Consensus
+# ============================================================
+#
+# Detection ของ Object เดียวกัน
+# ในหลาย Frame ต้องมี Bounding Box IoU
+# มากกว่าหรือเท่ากับ Threshold นี้
+#
 # ============================================================
 
 CONSENSUS_IOU_THRESHOLD = env_float(
@@ -466,7 +621,8 @@ MAX_VALID_DISTANCE_M = env_float(
 # - preflight.py สามารถตรวจพบว่า
 #   Production GPS ยังไม่ได้ตั้ง
 #
-# ห้ามใช้ NaN ใน Production
+# Production Ready ต้องไม่ใช้ nan
+#
 # ============================================================
 
 CAMERA_LAT = env_float(
@@ -530,13 +686,532 @@ DASHBOARD_WRITE_INTERVAL_SEC = env_float(
 # Server
 # ============================================================
 
-HEADLESS_MODE = (
-    env_text(
-        "HEADLESS_MODE",
-        "1",
-    )
-    != "0"
+HEADLESS_MODE = env_bool(
+    "HEADLESS_MODE",
+    True,
 )
+
+
+# ============================================================
+# Configuration validation
+# ============================================================
+
+
+def _require_config(
+    condition,
+    message,
+):
+    """
+    ตรวจ Runtime Configuration
+
+    ถ้าไม่ผ่าน Condition
+    จะหยุดและแจ้ง ConfigError ที่อ่านได้ชัดเจน
+    """
+
+    if not condition:
+
+        raise ConfigError(
+            message
+        )
+
+
+def validate_runtime_config():
+    """
+    ตรวจความถูกต้องและความสัมพันธ์
+    ของ Runtime Configuration
+
+    หน้าที่ของส่วนนี้คือ:
+        ตรวจชนิดค่า
+        ตรวจช่วงค่า
+        ตรวจความสัมพันธ์ของ Configuration
+
+    ไม่ได้ตรวจ Production Readiness เช่น:
+        Camera ใช้งานได้จริงหรือไม่
+        Model มีอยู่หรือไม่
+        Calibration ผ่านหรือไม่
+        Telegram ใช้งานได้หรือไม่
+        GPS Production ถูกตั้งหรือไม่
+
+    งานเหล่านั้นเป็นหน้าที่ของ preflight.py
+    """
+
+    # ========================================================
+    # Network ports
+    # ========================================================
+
+    _require_config(
+        1 <= CAMERA_PORT <= 65535,
+        (
+            "CAMERA_PORT must be between "
+            "1 and 65535"
+        ),
+    )
+
+    _require_config(
+        1 <= RTSP_PORT <= 65535,
+        (
+            "RTSP_PORT must be between "
+            "1 and 65535"
+        ),
+    )
+
+
+    # ========================================================
+    # Camera frame geometry
+    # ========================================================
+
+    _require_config(
+        FRAME_WIDTH > 0,
+        "FRAME_WIDTH must be > 0",
+    )
+
+    _require_config(
+        FRAME_HEIGHT > 0,
+        "FRAME_HEIGHT must be > 0",
+    )
+
+    _require_config(
+        (
+            math.isfinite(
+                HFOV_DEG
+            )
+            and
+            0.0
+            < HFOV_DEG
+            < 180.0
+        ),
+        (
+            "HFOV_DEG must be between "
+            "0 and 180 degrees"
+        ),
+    )
+
+
+    # ========================================================
+    # PTZ preset consistency
+    # ========================================================
+
+    _require_config(
+        (
+            set(
+                PRESET_PAN_DEG
+            )
+            ==
+            set(
+                PRESET_BEARING_DEG
+            )
+        ),
+        (
+            "PRESET_PAN_DEG and "
+            "PRESET_BEARING_DEG must contain "
+            "the same preset IDs"
+        ),
+    )
+
+    _require_config(
+        all(
+            preset
+            in PRESET_PAN_DEG
+            for preset
+            in SWEEP_SEQUENCE
+        ),
+        (
+            "SWEEP_SEQUENCE contains "
+            "an unknown preset"
+        ),
+    )
+
+
+    # ========================================================
+    # PTZ / Frame synchronization
+    # ========================================================
+
+    _require_config(
+        (
+            math.isfinite(
+                DEG_PER_SEC
+            )
+            and
+            DEG_PER_SEC > 0.0
+        ),
+        "DEG_PER_SEC must be > 0",
+    )
+
+    _require_config(
+        (
+            math.isfinite(
+                PTZ_BUFFER_SEC
+            )
+            and
+            PTZ_BUFFER_SEC >= 0.0
+        ),
+        "PTZ_BUFFER_SEC must be >= 0",
+    )
+
+    _require_config(
+        (
+            math.isfinite(
+                INITIAL_PRESET_WAIT_SEC
+            )
+            and
+            INITIAL_PRESET_WAIT_SEC >= 0.0
+        ),
+        (
+            "INITIAL_PRESET_WAIT_SEC "
+            "must be >= 0"
+        ),
+    )
+
+    _require_config(
+        (
+            math.isfinite(
+                STABLE_DIFF_THRESHOLD
+            )
+            and
+            STABLE_DIFF_THRESHOLD >= 0.0
+        ),
+        (
+            "STABLE_DIFF_THRESHOLD "
+            "must be >= 0"
+        ),
+    )
+
+    _require_config(
+        STABLE_REQUIRED_PAIRS >= 1,
+        (
+            "STABLE_REQUIRED_PAIRS "
+            "must be >= 1"
+        ),
+    )
+
+    _require_config(
+        (
+            math.isfinite(
+                STABLE_TIMEOUT_SEC
+            )
+            and
+            STABLE_TIMEOUT_SEC > 0.0
+        ),
+        (
+            "STABLE_TIMEOUT_SEC "
+            "must be > 0"
+        ),
+    )
+
+    _require_config(
+        POST_MOVE_FRESH_FRAMES >= 1,
+        (
+            "POST_MOVE_FRESH_FRAMES "
+            "must be >= 1"
+        ),
+    )
+
+
+    # ========================================================
+    # AI Backend
+    # ========================================================
+
+    _require_config(
+        MODEL_BACKEND
+        in {
+            "pt",
+            "openvino",
+        },
+        (
+            "MODEL_BACKEND must be "
+            "'pt' or 'openvino'"
+        ),
+    )
+
+    _require_config(
+        bool(
+            INFERENCE_DEVICE
+        ),
+        (
+            "INFERENCE_DEVICE "
+            "must not be empty"
+        ),
+    )
+
+    _require_config(
+        IMGSZ >= 32,
+        (
+            "IMGSZ must be >= 32"
+        ),
+    )
+
+    _require_config(
+        STARTUP_WARMUP_RUNS >= 0,
+        (
+            "STARTUP_WARMUP_RUNS "
+            "must be >= 0"
+        ),
+    )
+
+
+    # ========================================================
+    # Multi-frame detection
+    # ========================================================
+
+    _require_config(
+        FRAMES_PER_SCAN >= 1,
+        (
+            "FRAMES_PER_SCAN "
+            "must be >= 1"
+        ),
+    )
+
+    _require_config(
+        (
+            1
+            <= MIN_CONFIRM_FRAMES
+            <= FRAMES_PER_SCAN
+        ),
+        (
+            "MIN_CONFIRM_FRAMES must be "
+            "between 1 and FRAMES_PER_SCAN"
+        ),
+    )
+
+    _require_config(
+        (
+            math.isfinite(
+                FRAME_SAMPLE_GAP_SEC
+            )
+            and
+            FRAME_SAMPLE_GAP_SEC >= 0.0
+        ),
+        (
+            "FRAME_SAMPLE_GAP_SEC "
+            "must be >= 0"
+        ),
+    )
+
+
+    # ========================================================
+    # Detection thresholds
+    # ========================================================
+
+    for (
+        class_name,
+        threshold,
+    ) in CLASS_THRESHOLDS.items():
+
+        _require_config(
+            (
+                math.isfinite(
+                    threshold
+                )
+                and
+                0.0
+                <= threshold
+                <= 1.0
+            ),
+            (
+                f"{class_name.upper()} "
+                f"threshold must be "
+                f"between 0 and 1"
+            ),
+        )
+
+
+    # ========================================================
+    # Consensus
+    # ========================================================
+
+    _require_config(
+        (
+            math.isfinite(
+                CONSENSUS_IOU_THRESHOLD
+            )
+            and
+            0.0
+            <= CONSENSUS_IOU_THRESHOLD
+            <= 1.0
+        ),
+        (
+            "CONSENSUS_IOU_THRESHOLD "
+            "must be between 0 and 1"
+        ),
+    )
+
+
+    # ========================================================
+    # Distance
+    # ========================================================
+
+    _require_config(
+        (
+            math.isfinite(
+                MIN_VALID_DISTANCE_M
+            )
+            and
+            MIN_VALID_DISTANCE_M > 0.0
+        ),
+        (
+            "MIN_VALID_DISTANCE_M "
+            "must be > 0"
+        ),
+    )
+
+    _require_config(
+        (
+            math.isfinite(
+                MAX_VALID_DISTANCE_M
+            )
+            and
+            MAX_VALID_DISTANCE_M
+            > MIN_VALID_DISTANCE_M
+        ),
+        (
+            "MAX_VALID_DISTANCE_M must be "
+            "greater than "
+            "MIN_VALID_DISTANCE_M"
+        ),
+    )
+
+
+    # ========================================================
+    # Site coordinates
+    # ========================================================
+    #
+    # กรณีที่ 1:
+    #
+    # CAMERA_LAT=nan
+    # CAMERA_LON=nan
+    #
+    # หมายถึงยังไม่ตั้ง Production Site
+    #
+    #
+    # กรณีที่ 2:
+    #
+    # LAT / LON เป็นตัวเลขทั้งคู่
+    #
+    # จะตรวจ Geographic Range
+    #
+    #
+    # ไม่อนุญาต:
+    #
+    # LAT=nan
+    # LON=98.xxx
+    #
+    # หรือกลับกัน
+    #
+    # ========================================================
+
+    lat_is_nan = math.isnan(
+        CAMERA_LAT
+    )
+
+    lon_is_nan = math.isnan(
+        CAMERA_LON
+    )
+
+    _require_config(
+        lat_is_nan
+        ==
+        lon_is_nan,
+        (
+            "CAMERA_LAT and CAMERA_LON "
+            "must either both be nan or "
+            "both contain numeric coordinates"
+        ),
+    )
+
+    if not lat_is_nan:
+
+        _require_config(
+            (
+                math.isfinite(
+                    CAMERA_LAT
+                )
+                and
+                -90.0
+                <= CAMERA_LAT
+                <= 90.0
+            ),
+            (
+                "CAMERA_LAT must be "
+                "between -90 and 90"
+            ),
+        )
+
+        _require_config(
+            (
+                math.isfinite(
+                    CAMERA_LON
+                )
+                and
+                -180.0
+                <= CAMERA_LON
+                <= 180.0
+            ),
+            (
+                "CAMERA_LON must be "
+                "between -180 and 180"
+            ),
+        )
+
+
+    # ========================================================
+    # Alert
+    # ========================================================
+
+    _require_config(
+        (
+            math.isfinite(
+                ALERT_COOLDOWN_SEC
+            )
+            and
+            ALERT_COOLDOWN_SEC >= 0.0
+        ),
+        (
+            "ALERT_COOLDOWN_SEC "
+            "must be >= 0"
+        ),
+    )
+
+    _require_config(
+        (
+            math.isfinite(
+                ALERT_DEDUP_IOU_THRESHOLD
+            )
+            and
+            0.0
+            <= ALERT_DEDUP_IOU_THRESHOLD
+            <= 1.0
+        ),
+        (
+            "ALERT_DEDUP_IOU_THRESHOLD "
+            "must be between 0 and 1"
+        ),
+    )
+
+
+    # ========================================================
+    # Dashboard output
+    # ========================================================
+
+    _require_config(
+        (
+            math.isfinite(
+                DASHBOARD_WRITE_INTERVAL_SEC
+            )
+            and
+            DASHBOARD_WRITE_INTERVAL_SEC > 0.0
+        ),
+        (
+            "DASHBOARD_WRITE_INTERVAL_SEC "
+            "must be > 0"
+        ),
+    )
+
+
+# ============================================================
+# Validate configuration on import
+# ============================================================
+
+validate_runtime_config()
 
 
 # ============================================================

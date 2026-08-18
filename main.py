@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# main.py
 
 import json
 import os
@@ -9,7 +10,10 @@ from pathlib import Path
 import cv2
 import psutil
 
-from camera import LatestFrameCamera, wait_until_stable
+from camera import (
+    LatestFrameCamera,
+    wait_until_stable,
+)
 
 from config import (
     SWEEP_SEQUENCE,
@@ -22,7 +26,9 @@ from config import (
     FRAMES_PER_SCAN,
     MIN_CONFIRM_FRAMES,
     FRAME_SAMPLE_GAP_SEC,
+    STARTUP_WARMUP_RUNS,
     ALERT_COOLDOWN_SEC,
+    ALERT_DEDUP_IOU_THRESHOLD,
     STATIC_DIR,
     DASHBOARD_WRITE_INTERVAL_SEC,
     SITE_CALIBRATION_FILE,
@@ -48,7 +54,7 @@ from ptz import PTZController
 
 
 # ============================================================
-# Runtime configuration
+# Runtime paths
 # ============================================================
 
 LATEST_FRAME = (
@@ -67,28 +73,9 @@ STATUS_JSON = (
 )
 
 
-# ------------------------------------------------------------
-# Startup AI warm-up
-# ------------------------------------------------------------
-#
-# Warm-up เฉพาะครั้งเดียวตอนเปิดโปรแกรม
-# ไม่ Warm-up ทุก Preset
-#
-
-STARTUP_WARMUP_RUNS = max(
-    0,
-    int(
-        os.getenv(
-            "STARTUP_WARMUP_RUNS",
-            "3",
-        )
-    ),
-)
-
-
-# ------------------------------------------------------------
+# ============================================================
 # Valid GPS quality
-# ------------------------------------------------------------
+# ============================================================
 
 VALID_GPS_QUALITIES = {
     "calibrated",
@@ -96,9 +83,9 @@ VALID_GPS_QUALITIES = {
 }
 
 
-# ------------------------------------------------------------
+# ============================================================
 # Alert Event Deduplication
-# ------------------------------------------------------------
+# ============================================================
 #
 # เหตุการณ์จะถือว่า "ซ้ำ" เมื่อ:
 #
@@ -109,25 +96,25 @@ VALID_GPS_QUALITIES = {
 #
 # คนละ Preset จะถือเป็นคนละ Event
 #
-
-ALERT_DEDUP_IOU_THRESHOLD = float(
-    os.getenv(
-        "ALERT_DEDUP_IOU_THRESHOLD",
-        "0.50",
-    )
-)
+# ALERT_DEDUP_IOU_THRESHOLD ถูกโหลดและ Validate
+# จาก config.py เพียงจุดเดียว
+#
+# ============================================================
 
 
-# ------------------------------------------------------------
+# ============================================================
 # Alert spool directory
-# ------------------------------------------------------------
+# ============================================================
 #
 # Telegram worker เป็น asynchronous
 #
-# จึงไม่ควรส่ง latest_alert.jpg โดยตรงเข้า Queue
+# ไม่ควรส่ง latest_alert.jpg โดยตรงเข้า Queue
 # เพราะ Alert ใหม่อาจ overwrite รูปเดิม
 # ก่อน Telegram worker เปิดอ่านไฟล์
 #
+# จึงสร้างไฟล์เฉพาะ Event แยกออกมา
+#
+# ============================================================
 
 ALERT_SPOOL_DIR = (
     STATIC_DIR
@@ -152,8 +139,8 @@ def atomic_imwrite(
     Write image into a temporary file,
     then atomically replace the target.
 
-    ลดโอกาส Dashboard อ่าน JPEG
-    ขณะไฟล์กำลังถูกเขียน
+    ลดโอกาสที่ Dashboard จะอ่าน JPEG
+    ขณะที่ไฟล์กำลังถูกเขียน
     """
 
     path.parent.mkdir(
@@ -274,15 +261,18 @@ def wait_fresh_frames(
     Wait for a number of frames newer than after_seq.
 
     Returns:
-        newest packet or None
+        newest FramePacket
+        หรือ None เมื่อ Timeout
     """
 
     seq = after_seq
-
     packet = None
 
     for _ in range(
-        max(1, count)
+        max(
+            1,
+            int(count),
+        )
     ):
 
         packet = (
@@ -313,7 +303,7 @@ def warm_up_detector(
     Warm up AI backend ONCE at program startup.
 
     Warm-up results:
-    - ไม่เข้า consensus
+    - ไม่เข้า Consensus
     - ไม่สร้าง Alert
     - ไม่บันทึกเป็น Detection Event
     """
@@ -579,7 +569,7 @@ def detection_to_dict(
 
 
 # ============================================================
-# Alert Event Deduplication
+# Alert Event Deduplicator
 # ============================================================
 
 class AlertDeduplicator:
@@ -595,7 +585,7 @@ class AlertDeduplicator:
     - different event
 
     Different object inside same preset:
-    - different event if IoU is low
+    - different event when IoU is low
     """
 
     def __init__(
@@ -663,7 +653,7 @@ class AlertDeduplicator:
 
             (True, "new_event")
 
-        or
+        หรือ
 
             (
                 False,
@@ -677,9 +667,9 @@ class AlertDeduplicator:
 
         for event in self.events:
 
-            # -----------------------------
+            # ------------------------------------------------
             # Different class
-            # -----------------------------
+            # ------------------------------------------------
 
             if (
                 event["class"]
@@ -688,11 +678,11 @@ class AlertDeduplicator:
                 continue
 
 
-            # -----------------------------
+            # ------------------------------------------------
             # Different preset
             #
             # จะไม่ถูก cooldown ข้ามกัน
-            # -----------------------------
+            # ------------------------------------------------
 
             if (
                 event["preset"]
@@ -701,9 +691,9 @@ class AlertDeduplicator:
                 continue
 
 
-            # -----------------------------
+            # ------------------------------------------------
             # Spatial comparison
-            # -----------------------------
+            # ------------------------------------------------
 
             iou = bbox_iou(
                 event["bbox"],
@@ -717,7 +707,10 @@ class AlertDeduplicator:
 
                 # Update bbox to latest
                 # เพื่อรองรับวัตถุขยับเล็กน้อย
-                # แต่ไม่ต่อเวลา cooldown
+                #
+                # ไม่ Update alerted_at
+                # เพราะไม่ต้องการต่อ Cooldown
+
                 event["bbox"] = tuple(
                     detection.bbox
                 )
@@ -1924,11 +1917,11 @@ def main():
                 )
 
 
-                # =================================================
+                # =============================================
                 # EVENT-BASED ALERTING
-                # =================================================
+                # =============================================
                 #
-                # ไม่มี Global cooldown แล้ว
+                # ไม่มี Global cooldown
                 #
                 # แต่ละ Detection ถูกตรวจว่าเป็น:
                 #
@@ -1940,14 +1933,15 @@ def main():
                 # class
                 # + preset
                 # + bbox IoU
-                # =================================================
+                #
+                # =============================================
 
                 if confirmed:
 
 
-                    # ---------------------------------------------
+                    # -----------------------------------------
                     # Confidence สูงก่อน
-                    # ---------------------------------------------
+                    # -----------------------------------------
 
                     ordered_alerts = sorted(
                         confirmed,
@@ -1961,9 +1955,9 @@ def main():
                     for detection in ordered_alerts:
 
 
-                        # =========================================
+                        # =====================================
                         # Check event cooldown
-                        # =========================================
+                        # =====================================
 
                         (
                             should_alert,
@@ -1978,9 +1972,9 @@ def main():
                         )
 
 
-                        # =========================================
+                        # =====================================
                         # Duplicate Event
-                        # =========================================
+                        # =====================================
 
                         if not should_alert:
 
@@ -1996,9 +1990,9 @@ def main():
                             continue
 
 
-                        # =========================================
+                        # =====================================
                         # NEW EVENT
-                        # =========================================
+                        # =====================================
 
                         print(
                             "🆕 New alert event "
@@ -2009,9 +2003,9 @@ def main():
                         )
 
 
-                        # -----------------------------------------
+                        # -------------------------------------
                         # Dashboard latest alert
-                        # -----------------------------------------
+                        # -------------------------------------
 
                         atomic_imwrite(
                             LATEST_ALERT,
@@ -2019,9 +2013,9 @@ def main():
                         )
 
 
-                        # -----------------------------------------
+                        # -------------------------------------
                         # Build safe message
-                        # -----------------------------------------
+                        # -------------------------------------
 
                         message = (
                             format_alert(
@@ -2033,23 +2027,23 @@ def main():
                         )
 
 
-                        # -----------------------------------------
+                        # -------------------------------------
                         # Alert accepted state
-                        # -----------------------------------------
+                        # -------------------------------------
 
                         alert_accepted = True
 
 
-                        # =========================================
+                        # =====================================
                         # Telegram enabled
-                        # =========================================
+                        # =====================================
 
                         if notifier.enabled:
 
 
-                            # -------------------------------------
+                            # ---------------------------------
                             # Create unique spool image
-                            # -------------------------------------
+                            # ---------------------------------
 
                             spool_path = (
                                 create_alert_spool(
@@ -2068,8 +2062,9 @@ def main():
                                     "created"
                                 )
 
-                                # ไม่ record cooldown
-                                # เพื่อให้รอบถัดไป retry
+                                # ไม่ Record Cooldown
+                                # เพื่อให้รอบถัดไป Retry
+
                                 alert_accepted = (
                                     False
                                 )
@@ -2078,9 +2073,9 @@ def main():
                             else:
 
 
-                                # ---------------------------------
+                                # -----------------------------
                                 # Queue Telegram
-                                # ---------------------------------
+                                # -----------------------------
 
                                 alert_accepted = (
                                     notifier.submit(
@@ -2109,9 +2104,9 @@ def main():
                                     )
 
 
-                        # =========================================
+                        # =====================================
                         # Telegram disabled
-                        # =========================================
+                        # =====================================
 
                         else:
 
@@ -2122,19 +2117,21 @@ def main():
                             )
 
 
-                        # =========================================
+                        # =====================================
                         # Record cooldown event
-                        # =========================================
+                        # =====================================
                         #
                         # Record เมื่อ:
                         #
-                        # - Telegram queue รับแล้ว
+                        # - Telegram Queue รับแล้ว
                         # หรือ
-                        # - Telegram disabled แต่ Local alert สำเร็จ
+                        # - Telegram Disabled
+                        #   แต่ Local Alert สำเร็จ
                         #
-                        # ถ้า Queue เต็ม / spool fail
-                        # จะไม่ Record เพื่อให้ retry
-                        # =========================================
+                        # ถ้า Queue เต็ม / Spool Fail
+                        # จะไม่ Record เพื่อให้ Retry
+                        #
+                        # =====================================
 
                         if alert_accepted:
 
@@ -2145,9 +2142,9 @@ def main():
                             )
 
 
-                        # =========================================
+                        # =====================================
                         # Console Alert
-                        # =========================================
+                        # =====================================
 
                         print(
                             "\n"
