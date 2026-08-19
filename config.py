@@ -1,6 +1,28 @@
 #!/usr/bin/env python3
 # config.py
 
+"""
+Smart Fire Detection v2
+Central Runtime Configuration
+
+Final AI Model Integration:
+    Release : R3-E6
+    Status  : Frozen
+
+หน้าที่:
+- เป็น Single Source of Truth ของ Runtime Configuration
+- อ่าน Environment Variables อย่างปลอดภัย
+- ตรวจรูปแบบและช่วงของ Configuration
+- เก็บ Final AI Model Contract
+- รองรับ Production Preflight
+
+หมายเหตุ:
+- config.py ไม่โหลด YOLO model
+- config.py ไม่คำนวณ SHA256 ของไฟล์จริง
+- config.py ไม่เชื่อม Camera / Telegram
+- Production artifact/model validation เป็นหน้าที่ของ preflight.py
+"""
+
 import math
 import os
 from pathlib import Path
@@ -19,10 +41,9 @@ BASE_DIR = Path(
 # Environment helpers
 # ============================================================
 
-
 class ConfigError(ValueError):
     """
-    Error สำหรับ Configuration ที่มีค่าผิดรูปแบบ
+    Configuration มีค่าผิดรูปแบบ
     หรือไม่อยู่ในช่วงที่ระบบรองรับ
     """
 
@@ -36,8 +57,8 @@ def env_text(
 
     ใช้ strip() กับค่าทั่วไป
 
-    ค่าอย่าง Password ที่ whitespace อาจมีความหมาย
-    ให้ใช้ os.getenv() โดยตรงแทน
+    Password ที่ whitespace อาจมีความหมาย
+    ต้องใช้ os.getenv() โดยตรง
     """
 
     value = os.getenv(
@@ -59,9 +80,6 @@ def env_int(
 ):
     """
     อ่าน Environment Variable แบบ Integer
-
-    ถ้าค่าไม่สามารถแปลงเป็น Integer ได้
-    จะแจ้งชื่อ Environment Variable ที่ผิดโดยตรง
     """
 
     raw = os.getenv(
@@ -70,7 +88,6 @@ def env_int(
     )
 
     try:
-
         return int(
             str(raw).strip()
         )
@@ -93,9 +110,9 @@ def env_float(
     """
     อ่าน Environment Variable แบบ Float
 
-    รองรับค่า nan โดยตั้งใจ
-    เพราะ CAMERA_LAT / CAMERA_LON ใช้ nan
-    ก่อนกำหนดตำแหน่ง Site จริง
+    รองรับ nan โดยตั้งใจ
+    สำหรับ CAMERA_LAT / CAMERA_LON
+    ก่อนกำหนด Production Site
     """
 
     raw = os.getenv(
@@ -104,7 +121,6 @@ def env_float(
     )
 
     try:
-
         return float(
             str(raw).strip()
         )
@@ -125,7 +141,7 @@ def env_bool(
     default=False,
 ):
     """
-    อ่าน Environment Variable แบบ Boolean
+    Boolean values:
 
     True:
         1
@@ -157,7 +173,6 @@ def env_bool(
         "yes",
         "on",
     }:
-
         return True
 
     if raw in {
@@ -166,13 +181,11 @@ def env_bool(
         "no",
         "off",
     }:
-
         return False
 
     raise ConfigError(
         f"Invalid boolean environment variable "
-        f"{name}={raw!r}; "
-        f"expected one of "
+        f"{name}={raw!r}; expected one of "
         f"1/0, true/false, yes/no, on/off"
     )
 
@@ -184,15 +197,8 @@ def env_path(
     """
     อ่าน Path จาก Environment
 
-    ถ้าเป็น Relative Path เช่น:
-
-        models/fire.pt
-
-    จะ Resolve จาก BASE_DIR เป็น:
-
-        <project>/models/fire.pt
-
-    ทำให้ Path ไม่ขึ้นกับ Current Working Directory
+    Relative path จะ Resolve จาก BASE_DIR
+    ไม่ใช่ Current Working Directory
     """
 
     raw = env_text(
@@ -205,7 +211,6 @@ def env_path(
     ).expanduser()
 
     if not path.is_absolute():
-
         path = (
             BASE_DIR
             / path
@@ -216,11 +221,6 @@ def env_path(
 
 # ============================================================
 # Camera / RTSP
-# ============================================================
-#
-# ไม่มี IP / Username / Password จริงเป็น Default
-#
-# Production ต้องส่งค่าผ่าน Environment
 # ============================================================
 
 CAMERA_IP = env_text(
@@ -237,7 +237,6 @@ CAMERA_USER = env_text(
 )
 
 # Password ไม่ strip()
-# เพื่อไม่เปลี่ยน Password ที่ผู้ใช้กำหนด
 CAMERA_PWD = os.getenv(
     "CAMERA_PWD",
     "",
@@ -256,23 +255,6 @@ RTSP_PATH = env_text(
 
 # ============================================================
 # Camera ID / RTSP URL
-# ============================================================
-#
-# สามารถกำหนด CAMERA_ID เองได้
-#
-# เช่น:
-#
-# CAMERA_ID=rtsp://...
-#
-# ถ้าไม่ได้กำหนด
-# ระบบจะประกอบ URL จาก:
-#
-# CAMERA_USER
-# CAMERA_PWD
-# CAMERA_IP
-# RTSP_PORT
-# RTSP_PATH
-#
 # ============================================================
 
 CAMERA_ID = env_text(
@@ -294,7 +276,7 @@ if not CAMERA_ID:
 
     else:
 
-        # ปล่อยว่างแทนการฝัง IP จริงใน Source
+        # Development / Offline mode
         CAMERA_ID = ""
 
 
@@ -317,8 +299,7 @@ FRAME_HEIGHT = env_int(
 # Camera Horizontal FOV
 # ============================================================
 #
-# ค่านี้เป็น Camera Geometry
-# ไม่ใช่ Secret
+# Camera Geometry
 #
 # หากเปลี่ยน:
 #
@@ -343,7 +324,6 @@ HFOV_DEG = env_float(
 # ============================================================
 
 # Physical pan coordinates
-#
 # -177.5 .. +177.5
 
 PRESET_PAN_DEG = {
@@ -405,7 +385,7 @@ SWEEP_SEQUENCE = [
 
 
 # ============================================================
-# PTZ timing
+# PTZ / Frame synchronization
 # ============================================================
 
 DEG_PER_SEC = env_float(
@@ -445,6 +425,87 @@ POST_MOVE_FRESH_FRAMES = env_int(
 
 
 # ============================================================
+# FINAL AI MODEL CONTRACT
+# R3-E6 RELEASE V1
+# ============================================================
+#
+# Final Model เป็น Frozen Artifact
+#
+# ห้าม:
+# - Train
+# - Fine-tune
+# - Quantize
+# - Save checkpoint ใหม่แทน Master
+# - เปลี่ยน class order
+#
+# ============================================================
+
+FINAL_MODEL_RELEASE = (
+    "R3-E6"
+)
+
+FINAL_MODEL_SOURCE_NAME = (
+    "fire_smoke_r3_e6_final.pt"
+)
+
+FINAL_MODEL_MASTER_PATH = (
+    BASE_DIR
+    / "models"
+    / "final"
+    / FINAL_MODEL_SOURCE_NAME
+).resolve()
+
+FINAL_MODEL_RUNTIME_PATH = (
+    BASE_DIR
+    / "models"
+    / "fire.pt"
+).resolve()
+
+
+# ------------------------------------------------------------
+# Binary integrity
+# ------------------------------------------------------------
+
+EXPECTED_MODEL_SHA256 = (
+    "49dc0464d99a6c250cf3c3e305d4149c"
+    "3d4ce3ee354d9d7a5ae1cb8c53a22183"
+)
+
+
+# ------------------------------------------------------------
+# Class Contract
+# ------------------------------------------------------------
+#
+# Exact:
+#   0 = fire
+#   1 = smoke
+#
+# ------------------------------------------------------------
+
+EXPECTED_MODEL_CLASSES = {
+    0: "fire",
+    1: "smoke",
+}
+
+
+# ------------------------------------------------------------
+# Runtime reference versions
+# ------------------------------------------------------------
+
+EXPECTED_ULTRALYTICS_VERSION = (
+    "8.4.95"
+)
+
+REFERENCE_PYTORCH_VERSION = (
+    "2.11.0"
+)
+
+# Model Team ไม่มี authoritative exact torchvision version
+# ห้ามเดา version แล้วถือเป็น Final Contract
+REFERENCE_TORCHVISION_VERSION = None
+
+
+# ============================================================
 # AI Backend
 # ============================================================
 
@@ -460,9 +521,7 @@ MODEL_BACKEND = (
 MODEL_PATH_PT = str(
     env_path(
         "MODEL_PATH_PT",
-        BASE_DIR
-        / "models"
-        / "fire.pt",
+        FINAL_MODEL_RUNTIME_PATH,
     )
 )
 
@@ -470,9 +529,11 @@ MODEL_PATH_PT = str(
 MODEL_PATH_OPENVINO = str(
     env_path(
         "MODEL_PATH_OPENVINO",
-        BASE_DIR
-        / "models"
-        / "fire_openvino_model",
+        (
+            BASE_DIR
+            / "models"
+            / "fire_openvino_model"
+        ),
     )
 )
 
@@ -483,22 +544,52 @@ INFERENCE_DEVICE = env_text(
 )
 
 
+# ============================================================
+# Final Model Inference Contract
+# ============================================================
+#
+# YOLO.predict() High-Level API:
+#
+# source   = raw OpenCV BGR frame
+# imgsz    = 768
+# conf     = 0.25
+# iou      = 0.70
+# max_det  = 300
+# rect     = False
+# batch    = 1
+#
+# ห้ามทำ manual preprocessing ก่อน YOLO.predict()
+#
+# ============================================================
+
 IMGSZ = env_int(
     "IMGSZ",
-    640,
+    768,
+)
+
+MODEL_NMS_IOU = env_float(
+    "MODEL_NMS_IOU",
+    0.70,
+)
+
+MODEL_MAX_DET = env_int(
+    "MODEL_MAX_DET",
+    300,
+)
+
+MODEL_RECT = env_bool(
+    "MODEL_RECT",
+    False,
+)
+
+MODEL_BATCH = env_int(
+    "MODEL_BATCH",
+    1,
 )
 
 
 # ============================================================
 # AI Startup
-# ============================================================
-#
-# Warm-up ทำเพียงครั้งเดียว
-# ตอน Production Runtime เริ่มต้น
-#
-# main.py ต้อง Import ค่านี้จาก config.py
-# ห้ามอ่าน os.getenv() ซ้ำใน main.py
-#
 # ============================================================
 
 STARTUP_WARMUP_RUNS = env_int(
@@ -508,7 +599,23 @@ STARTUP_WARMUP_RUNS = env_int(
 
 
 # ============================================================
-# Detection
+# Detection / Candidate Detection
+# ============================================================
+#
+# 0.25 = MODEL CANDIDATE THRESHOLD
+#
+# ไม่ใช่ Final Alert Threshold
+#
+# Candidate
+#      ↓
+# Multi-frame Consensus
+#      ↓
+# Confirmed Detection
+#      ↓
+# Alert Dedup
+#      ↓
+# Notification
+#
 # ============================================================
 
 FRAMES_PER_SCAN = env_int(
@@ -531,12 +638,12 @@ CLASS_THRESHOLDS = {
 
     "fire": env_float(
         "FIRE_THRESHOLD",
-        0.50,
+        0.25,
     ),
 
     "smoke": env_float(
         "SMOKE_THRESHOLD",
-        0.60,
+        0.25,
     ),
 }
 
@@ -562,9 +669,11 @@ CLASS_ALIASES = {
 # Consensus
 # ============================================================
 #
-# Detection ของ Object เดียวกัน
-# ในหลาย Frame ต้องมี Bounding Box IoU
-# มากกว่าหรือเท่ากับ Threshold นี้
+# KEEP:
+#
+# Frames          = 3
+# Confirm         = 2
+# Consensus IoU   = 0.30
 #
 # ============================================================
 
@@ -580,8 +689,10 @@ CONSENSUS_IOU_THRESHOLD = env_float(
 
 CALIBRATION_DIR = env_path(
     "CALIBRATION_DIR",
-    BASE_DIR
-    / "calibration",
+    (
+        BASE_DIR
+        / "calibration"
+    ),
 )
 
 
@@ -609,19 +720,17 @@ MAX_VALID_DISTANCE_M = env_float(
 
 
 # ============================================================
-# Camera site coordinates
+# Camera Site Coordinates
 # ============================================================
 #
-# ไม่มี GPS จริงเป็น Default
+# Development:
 #
-# float("nan") ทำให้:
+# CAMERA_LAT=nan
+# CAMERA_LON=nan
 #
-# - config.py ยัง Import ได้
-# - Offline tools ยังทำงานได้
-# - preflight.py สามารถตรวจพบว่า
-#   Production GPS ยังไม่ได้ตั้ง
+# Production:
 #
-# Production Ready ต้องไม่ใช้ nan
+# ต้องเป็นตัวเลขจริงทั้งคู่
 #
 # ============================================================
 
@@ -666,13 +775,15 @@ ALERT_DEDUP_IOU_THRESHOLD = env_float(
 
 
 # ============================================================
-# Output
+# Output / Dashboard
 # ============================================================
 
 STATIC_DIR = env_path(
     "STATIC_DIR",
-    BASE_DIR
-    / "static",
+    (
+        BASE_DIR
+        / "static"
+    ),
 )
 
 
@@ -693,19 +804,15 @@ HEADLESS_MODE = env_bool(
 
 
 # ============================================================
-# Configuration validation
+# Internal validation helper
 # ============================================================
-
 
 def _require_config(
     condition,
     message,
 ):
     """
-    ตรวจ Runtime Configuration
-
-    ถ้าไม่ผ่าน Condition
-    จะหยุดและแจ้ง ConfigError ที่อ่านได้ชัดเจน
+    Raise ConfigError หาก Condition ไม่ผ่าน
     """
 
     if not condition:
@@ -715,24 +822,23 @@ def _require_config(
         )
 
 
+# ============================================================
+# Generic Runtime Configuration Validation
+# ============================================================
+
 def validate_runtime_config():
     """
-    ตรวจความถูกต้องและความสัมพันธ์
-    ของ Runtime Configuration
+    ตรวจรูปแบบ ช่วงค่า และความสัมพันธ์ของ Runtime Configuration
 
-    หน้าที่ของส่วนนี้คือ:
-        ตรวจชนิดค่า
-        ตรวจช่วงค่า
-        ตรวจความสัมพันธ์ของ Configuration
+    ฟังก์ชันนี้ไม่ได้:
+    - โหลด Model
+    - ตรวจ Model SHA256 จริง
+    - ตรวจ model.names จริง
+    - เชื่อม Camera
+    - เชื่อม Telegram
+    - ตรวจ Calibration Production
 
-    ไม่ได้ตรวจ Production Readiness เช่น:
-        Camera ใช้งานได้จริงหรือไม่
-        Model มีอยู่หรือไม่
-        Calibration ผ่านหรือไม่
-        Telegram ใช้งานได้หรือไม่
-        GPS Production ถูกตั้งหรือไม่
-
-    งานเหล่านั้นเป็นหน้าที่ของ preflight.py
+    Production readiness เป็นหน้าที่ของ preflight.py
     """
 
     # ========================================================
@@ -740,7 +846,9 @@ def validate_runtime_config():
     # ========================================================
 
     _require_config(
-        1 <= CAMERA_PORT <= 65535,
+        1
+        <= CAMERA_PORT
+        <= 65535,
         (
             "CAMERA_PORT must be between "
             "1 and 65535"
@@ -748,7 +856,9 @@ def validate_runtime_config():
     )
 
     _require_config(
-        1 <= RTSP_PORT <= 65535,
+        1
+        <= RTSP_PORT
+        <= 65535,
         (
             "RTSP_PORT must be between "
             "1 and 65535"
@@ -941,6 +1051,49 @@ def validate_runtime_config():
     )
 
     _require_config(
+        (
+            math.isfinite(
+                MODEL_NMS_IOU
+            )
+            and
+            0.0
+            <= MODEL_NMS_IOU
+            <= 1.0
+        ),
+        (
+            "MODEL_NMS_IOU must be "
+            "between 0 and 1"
+        ),
+    )
+
+    _require_config(
+        MODEL_MAX_DET >= 1,
+        (
+            "MODEL_MAX_DET "
+            "must be >= 1"
+        ),
+    )
+
+    _require_config(
+        MODEL_BATCH >= 1,
+        (
+            "MODEL_BATCH "
+            "must be >= 1"
+        ),
+    )
+
+    _require_config(
+        isinstance(
+            MODEL_RECT,
+            bool,
+        ),
+        (
+            "MODEL_RECT "
+            "must be boolean"
+        ),
+    )
+
+    _require_config(
         STARTUP_WARMUP_RUNS >= 0,
         (
             "STARTUP_WARMUP_RUNS "
@@ -991,6 +1144,20 @@ def validate_runtime_config():
     # ========================================================
     # Detection thresholds
     # ========================================================
+
+    _require_config(
+        set(
+            CLASS_THRESHOLDS
+        )
+        == {
+            "fire",
+            "smoke",
+        },
+        (
+            "CLASS_THRESHOLDS must contain "
+            "exactly fire and smoke"
+        ),
+    )
 
     for (
         class_name,
@@ -1073,30 +1240,6 @@ def validate_runtime_config():
 
     # ========================================================
     # Site coordinates
-    # ========================================================
-    #
-    # กรณีที่ 1:
-    #
-    # CAMERA_LAT=nan
-    # CAMERA_LON=nan
-    #
-    # หมายถึงยังไม่ตั้ง Production Site
-    #
-    #
-    # กรณีที่ 2:
-    #
-    # LAT / LON เป็นตัวเลขทั้งคู่
-    #
-    # จะตรวจ Geographic Range
-    #
-    #
-    # ไม่อนุญาต:
-    #
-    # LAT=nan
-    # LON=98.xxx
-    #
-    # หรือกลับกัน
-    #
     # ========================================================
 
     lat_is_nan = math.isnan(
@@ -1189,7 +1332,7 @@ def validate_runtime_config():
 
 
     # ========================================================
-    # Dashboard output
+    # Dashboard
     # ========================================================
 
     _require_config(
@@ -1207,8 +1350,307 @@ def validate_runtime_config():
     )
 
 
+    # ========================================================
+    # Static Model Contract metadata sanity
+    # ========================================================
+
+    _require_config(
+        (
+            len(
+                EXPECTED_MODEL_SHA256
+            )
+            == 64
+            and
+            all(
+                char
+                in "0123456789abcdef"
+                for char
+                in EXPECTED_MODEL_SHA256.lower()
+            )
+        ),
+        (
+            "EXPECTED_MODEL_SHA256 "
+            "must contain exactly "
+            "64 hexadecimal characters"
+        ),
+    )
+
+    _require_config(
+        EXPECTED_MODEL_CLASSES
+        == {
+            0: "fire",
+            1: "smoke",
+        },
+        (
+            "EXPECTED_MODEL_CLASSES "
+            "must be exactly "
+            "{0: 'fire', 1: 'smoke'}"
+        ),
+    )
+
+    _require_config(
+        bool(
+            EXPECTED_ULTRALYTICS_VERSION
+        ),
+        (
+            "EXPECTED_ULTRALYTICS_VERSION "
+            "must not be empty"
+        ),
+    )
+
+
 # ============================================================
-# Validate configuration on import
+# FINAL R3-E6 MODEL CONTRACT VALIDATION
+# ============================================================
+
+def validate_final_model_contract():
+    """
+    ตรวจว่า Software Configuration
+    ตรง Final AI Model R3-E6 Release V1
+
+    ฟังก์ชันนี้ตรวจ Operating Point เท่านั้น
+
+    ยังไม่ตรวจ:
+    - SHA256 ของไฟล์จริง
+    - model.names จริง
+    - installed package version จริง
+
+    สิ่งเหล่านั้นต้องตรวจใน preflight.py
+    """
+
+    validate_runtime_config()
+
+
+    # ========================================================
+    # Approved Production Backend
+    # ========================================================
+
+    _require_config(
+        MODEL_BACKEND == "pt",
+        (
+            "Final R3-E6 Release V1 requires "
+            "MODEL_BACKEND=pt; "
+            "OpenVINO is not Production-approved yet"
+        ),
+    )
+
+    _require_config(
+        INFERENCE_DEVICE
+        .strip()
+        .lower()
+        == "cpu",
+        (
+            "Final R3-E6 Production baseline requires "
+            "INFERENCE_DEVICE=cpu"
+        ),
+    )
+
+
+    # ========================================================
+    # Runtime Model Path
+    # ========================================================
+
+    _require_config(
+        Path(
+            MODEL_PATH_PT
+        ).resolve()
+        ==
+        FINAL_MODEL_RUNTIME_PATH,
+        (
+            "Final R3-E6 Runtime Model must be "
+            f"{FINAL_MODEL_RUNTIME_PATH}"
+        ),
+    )
+
+
+    # ========================================================
+    # Model inference contract
+    # ========================================================
+
+    _require_config(
+        IMGSZ == 768,
+        (
+            "Final R3-E6 requires "
+            "IMGSZ=768"
+        ),
+    )
+
+    _require_config(
+        math.isclose(
+            CLASS_THRESHOLDS["fire"],
+            0.25,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ),
+        (
+            "Final R3-E6 requires "
+            "FIRE_THRESHOLD=0.25"
+        ),
+    )
+
+    _require_config(
+        math.isclose(
+            CLASS_THRESHOLDS["smoke"],
+            0.25,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ),
+        (
+            "Final R3-E6 requires "
+            "SMOKE_THRESHOLD=0.25"
+        ),
+    )
+
+    _require_config(
+        math.isclose(
+            MODEL_NMS_IOU,
+            0.70,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ),
+        (
+            "Final R3-E6 requires "
+            "MODEL_NMS_IOU=0.70"
+        ),
+    )
+
+    _require_config(
+        MODEL_MAX_DET == 300,
+        (
+            "Final R3-E6 requires "
+            "MODEL_MAX_DET=300"
+        ),
+    )
+
+    _require_config(
+        MODEL_RECT is False,
+        (
+            "Final R3-E6 requires "
+            "MODEL_RECT=false"
+        ),
+    )
+
+    _require_config(
+        MODEL_BATCH == 1,
+        (
+            "Final R3-E6 requires "
+            "MODEL_BATCH=1"
+        ),
+    )
+
+
+    # ========================================================
+    # System confirmation contract
+    # ========================================================
+
+    _require_config(
+        FRAMES_PER_SCAN == 3,
+        (
+            "Final R3-E6 integration requires "
+            "FRAMES_PER_SCAN=3"
+        ),
+    )
+
+    _require_config(
+        MIN_CONFIRM_FRAMES == 2,
+        (
+            "Final R3-E6 integration requires "
+            "MIN_CONFIRM_FRAMES=2"
+        ),
+    )
+
+    _require_config(
+        math.isclose(
+            FRAME_SAMPLE_GAP_SEC,
+            0.15,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ),
+        (
+            "Final R3-E6 integration requires "
+            "FRAME_SAMPLE_GAP_SEC=0.15"
+        ),
+    )
+
+    _require_config(
+        math.isclose(
+            CONSENSUS_IOU_THRESHOLD,
+            0.30,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ),
+        (
+            "Final R3-E6 integration requires "
+            "CONSENSUS_IOU_THRESHOLD=0.30"
+        ),
+    )
+
+    _require_config(
+        STARTUP_WARMUP_RUNS == 3,
+        (
+            "Final R3-E6 integration requires "
+            "STARTUP_WARMUP_RUNS=3"
+        ),
+    )
+
+
+    # ========================================================
+    # Frozen metadata contract
+    # ========================================================
+
+    _require_config(
+        EXPECTED_MODEL_SHA256
+        ==
+        (
+            "49dc0464d99a6c250cf3c3e305d4149c"
+            "3d4ce3ee354d9d7a5ae1cb8c53a22183"
+        ),
+        (
+            "Final R3-E6 expected SHA256 "
+            "has been modified"
+        ),
+    )
+
+    _require_config(
+        EXPECTED_MODEL_CLASSES
+        == {
+            0: "fire",
+            1: "smoke",
+        },
+        (
+            "Final R3-E6 Class Contract "
+            "has been modified"
+        ),
+    )
+
+    _require_config(
+        EXPECTED_ULTRALYTICS_VERSION
+        == "8.4.95",
+        (
+            "Final R3-E6 requires "
+            "Ultralytics 8.4.95"
+        ),
+    )
+
+    return True
+
+
+# ============================================================
+# Validate generic configuration on import
+# ============================================================
+#
+# ไม่เรียก validate_final_model_contract() ตอน import
+#
+# เหตุผล:
+# - Benchmark / Development tools อาจทดลอง Backend อื่น
+# - OpenVINO equivalence tools ยังต้องรันได้
+#
+# Production preflight ต้องเรียก:
+#
+#     validate_final_model_contract()
+#
+# ก่อนอนุญาต Detection Service
+#
 # ============================================================
 
 validate_runtime_config()
@@ -1222,6 +1664,7 @@ for path in (
     CALIBRATION_DIR,
     STATIC_DIR,
     BASE_DIR / "models",
+    BASE_DIR / "models" / "final",
 ):
 
     path.mkdir(

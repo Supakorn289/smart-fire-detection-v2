@@ -1,33 +1,148 @@
 # ============================================================
 # Smart Fire Detection v2
-# Runtime Dependencies
+# Production Runtime Dependencies
+# Final AI Model: R3-E6 Release V1
+# ============================================================
+#
+# Target Runtime:
+#
+#   Python        : 3.12
+#   OS Production : Debian Linux x86_64
+#   AI Backend    : PyTorch
+#   Device        : CPU
+#
+# IMPORTANT:
+#
+# Production CPU PyTorch must be installed from the official
+# PyTorch CPU wheel index BEFORE installing this file.
+#
+# See deployment installer for the CPU-specific install step.
+#
 # ============================================================
 
-numpy>=1.26,<2.3
-requests>=2.31
 
+# ============================================================
+# Numeric Runtime
+# ============================================================
+#
+# OpenCV 4.12 on Python >= 3.9 requires:
+#
+#   numpy >= 2
+#   numpy < 2.3
+#
+# Keep this range aligned with OpenCV.
+#
+# ============================================================
+
+numpy>=2.0,<2.3
+
+
+# ============================================================
+# HTTP / Network
+# ============================================================
+
+requests>=2.31,<3
+
+
+# ============================================================
 # Computer Vision
-opencv-python-headless>=4.8
+# ============================================================
+#
+# IMPORTANT:
+#
+# Use exactly ONE OpenCV wheel family.
+#
+# Ultralytics depends on "opencv-python".
+# Therefore Production Runtime uses opencv-python here instead
+# of installing opencv-python-headless at the same time.
+#
+# Do NOT additionally install:
+#
+#   opencv-python-headless
+#   opencv-contrib-python
+#   opencv-contrib-python-headless
+#
+# ============================================================
 
-# AI / YOLO
-ultralytics>=8.3
+opencv-python==4.12.0.88
 
-# Runtime monitoring
-psutil>=5.9
 
+# ============================================================
+# PyTorch Runtime
+# ============================================================
+#
+# Final Model Team reference:
+#
+#   PyTorch = 2.11.0
+#
+# Official compatible torchvision pair:
+#
+#   torchvision = 0.26.0
+#
+# NOTE:
+#
+# These pins enforce the required versions.
+#
+# They do NOT by themselves select CPU vs CUDA wheels.
+#
+# Production installer MUST install them first using:
+#
+#   https://download.pytorch.org/whl/cpu
+#
+# ============================================================
+
+torch==2.11.0
+torchvision==0.26.0
+
+
+# ============================================================
+# Final YOLO Runtime
+# ============================================================
+#
+# Final R3-E6 Model Contract:
+#
+#   Ultralytics == 8.4.95
+#
+# Do not change this version for Release V1 without
+# Model / Integration validation.
+#
+# ============================================================
+
+ultralytics==8.4.95
+
+
+# ============================================================
+# Runtime Monitoring
+# ============================================================
+
+psutil>=5.9,<8
+
+
+# ============================================================
 # Dashboard
-Flask>=3.0
+# ============================================================
 
-# Production WSGI server for Dashboard
+Flask>=3.0.1,<4
+
+
+# ============================================================
+# Production WSGI Server
+# ============================================================
+
 waitress==3.0.2
 
 
 # ============================================================
-# Optional AI Backend
+# OpenVINO
 # ============================================================
 #
-# Production installer installs OpenVINO separately.
+# NOT part of Production Runtime V1.
 #
-# Uncomment only when installing manually.
+# PT is the approved master runtime.
 #
-# openvino>=2025.0
+# OpenVINO FP32 must pass PT <-> OpenVINO equivalence
+# validation before Production approval.
+#
+# Do NOT add OpenVINO to this file yet.
+#
+# ============================================================
