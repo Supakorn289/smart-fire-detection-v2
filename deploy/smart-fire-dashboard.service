@@ -1,17 +1,30 @@
 [Unit]
-Description=Smart Fire Detection v2 Dashboard
+Description=Smart Fire Detection v2 - Production Dashboard
 
 Wants=network-online.target
 After=network-online.target
+
+# Dashboard ให้เริ่มหลัง Detection ถ้าทั้งสอง Service
+# ถูก Start ใน Transaction เดียวกัน
+#
+# intentionally NOT Requires=
+#
+# Dashboard ควรยังเปิดดูสถานะได้
+# แม้ Detection Runtime หยุดหรือ Failed
 After=smart-fire-detection.service
 
 
+# ป้องกัน Service restart loop เร็วเกินไป
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+
 [Service]
-Type=simple
+Type=exec
 
 
 # ============================================================
-# Runtime User
+# Runtime Identity
 # ============================================================
 
 User=smartfire
@@ -28,10 +41,77 @@ WorkingDirectory=/opt/smart-fire-detection-v2
 # ============================================================
 # Production Environment
 # ============================================================
+#
+# config.py ไม่โหลด .env อัตโนมัติ
+#
+# Dashboard จะรับ Production Configuration จาก:
+#
+# /etc/smart-fire-detection/production.env
+#
+# หากไฟล์นี้ไม่มี
+# systemd จะไม่เริ่ม Service
+#
+# ============================================================
 
 EnvironmentFile=/etc/smart-fire-detection/production.env
 
+
+# ============================================================
+# Python Runtime
+# ============================================================
+
 Environment=PYTHONUNBUFFERED=1
+
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+
+# ============================================================
+# Dashboard Startup Gate 1
+# Waitress Runtime
+# ============================================================
+#
+# Production Dashboard ต้องใช้:
+#
+# waitress==3.0.2
+#
+# หาก Package หายหรือ Version ผิด
+# Dashboard จะไม่เริ่ม
+#
+# ============================================================
+
+ExecStartPre=/opt/smart-fire-detection-v2/venv/bin/python -c "import importlib.metadata as m,sys; v=m.version('waitress'); print('Waitress:',v); sys.exit(0 if v=='3.0.2' else 1)"
+
+
+# ============================================================
+# Dashboard Startup Gate 2
+# Flask WSGI Application
+# ============================================================
+#
+# ตรวจว่า:
+#
+# app.py import ได้
+# app:app เป็น Flask WSGI application
+#
+# ไม่ Start Development Server
+#
+# ============================================================
+
+ExecStartPre=/opt/smart-fire-detection-v2/venv/bin/python -c "from app import app; assert hasattr(app,'wsgi_app'), 'app:app is not a WSGI application'; print('Dashboard WSGI: OK')"
+
+
+# ============================================================
+# Dashboard Startup Gate 3
+# Required Routes
+# ============================================================
+#
+# Required:
+#
+# /
+# /api/status
+#
+# ============================================================
+
+ExecStartPre=/opt/smart-fire-detection-v2/venv/bin/python -c "from app import app; r={x.rule for x in app.url_map.iter_rules()}; required={'/','/api/status'}; missing=required-r; assert not missing, f'Missing dashboard routes: {sorted(missing)}'; print('Dashboard routes: OK')"
 
 
 # ============================================================
@@ -45,20 +125,29 @@ Environment=PYTHONUNBUFFERED=1
 # Production:
 #
 #   systemd
-#       ↓
+#      ↓
 #   waitress-serve
-#       ↓
+#      ↓
 #   app:app
 #
-# app.py ต้องมี Flask application object:
+# 0.0.0.0:
 #
-#   app = Flask(...)
+# Dashboard รับ Connection จาก Network Interface
+# ของ Production Server
 #
-# อยู่ที่ Module level
+# Network exposure / firewall ต้องกำหนด
+# แยกต่างหากใน Deployment
 #
 # ============================================================
 
 ExecStart=/opt/smart-fire-detection-v2/venv/bin/waitress-serve --host=0.0.0.0 --port=5000 app:app
+
+
+# ============================================================
+# Startup Timeout
+# ============================================================
+
+TimeoutStartSec=30
 
 
 # ============================================================
@@ -67,23 +156,41 @@ ExecStart=/opt/smart-fire-detection-v2/venv/bin/waitress-serve --host=0.0.0.0 --
 
 Restart=on-failure
 
-RestartSec=5
+RestartSec=10
 
 
 # ============================================================
 # Shutdown
 # ============================================================
 
-TimeoutStopSec=10
+TimeoutStopSec=15
 
 
 # ============================================================
-# Basic Service Hardening
+# Process Security
 # ============================================================
 
 NoNewPrivileges=true
 
 PrivateTmp=true
+
+UMask=0027
+
+
+# ============================================================
+# Logging
+# ============================================================
+#
+# stdout / stderr ส่งเข้า systemd journal
+#
+# ดู Log:
+#
+# journalctl -u smart-fire-dashboard.service
+#
+# ============================================================
+
+StandardOutput=journal
+StandardError=journal
 
 
 [Install]

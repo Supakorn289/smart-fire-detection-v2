@@ -1,15 +1,20 @@
 [Unit]
-Description=Smart Fire Detection v2
-Documentation=Smart Fire Detection v2 Production Runtime
+Description=Smart Fire Detection v2 - Final R3-E6 Production Runtime
+
 Wants=network-online.target
 After=network-online.target
 
+# ป้องกันกรณี Final Contract ผิดแล้ว Restart วนเร็วเกินไป
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
 
 [Service]
-Type=simple
+Type=exec
+
 
 # ============================================================
-# Runtime user
+# Runtime identity
 # ============================================================
 
 User=smartfire
@@ -17,35 +22,152 @@ Group=smartfire
 
 
 # ============================================================
-# Project directory
+# Project
 # ============================================================
 
 WorkingDirectory=/opt/smart-fire-detection-v2
 
 
 # ============================================================
-# Production configuration
+# Production Environment
+# ============================================================
+#
+# Required:
+#
+# /etc/smart-fire-detection/production.env
+#
+# หากไฟล์ไม่มี systemd ต้องไม่เริ่ม Runtime
+#
+# config.py ไม่โหลด .env เอง
+# Production configuration ถูกส่งผ่าน EnvironmentFile นี้
+#
 # ============================================================
 
 EnvironmentFile=/etc/smart-fire-detection/production.env
 
-# ให้ Python แสดง log ออก journalctl ทันที
+
+# ============================================================
+# Python Runtime
+# ============================================================
+
 Environment=PYTHONUNBUFFERED=1
+
+# Project source เป็น root-owned/read-only สำหรับ Runtime user
+# จึงไม่ต้องให้ Python พยายามสร้าง __pycache__
+Environment=PYTHONDONTWRITEBYTECODE=1
 
 
 # ============================================================
-# Main application
+# Final R3-E6 Startup Gate
+# ============================================================
+#
+# Gate 1:
+#
+# Offline Preflight
+#
+# ตรวจ:
+# - Python
+# - Dependency stack
+# - OpenCV distribution
+# - Ultralytics exact version
+# - Final config contract
+# - Final model path
+# - Final model SHA256
+#
+# ไม่:
+# - เชื่อม RTSP
+# - สั่ง PTZ
+#
+# หาก FAIL:
+# ExecStart จะไม่ทำงาน
+#
+# ============================================================
+
+ExecStartPre=/opt/smart-fire-detection-v2/venv/bin/python /opt/smart-fire-detection-v2/preflight.py --offline
+
+
+# ============================================================
+# Final Model Artifact / Metadata Gate
+# ============================================================
+#
+# Gate 2:
+#
+# inspect_model.py
+#
+# ตรวจ:
+# - Final model configuration
+# - SHA256
+# - Ultralytics 8.4.95
+# - Model load
+# - exact classes:
+#
+#       0 = fire
+#       1 = smoke
+#
+# - Runtime Contract:
+#
+#       Backend = pt
+#       Device  = cpu
+#       IMGSZ   = 768
+#       conf    = 0.25
+#       IoU     = 0.70
+#       max_det = 300
+#       rect    = False
+#       batch   = 1
+#
+# inspect_model.py เป็น Read-only
+#
+# ============================================================
+
+ExecStartPre=/opt/smart-fire-detection-v2/venv/bin/python /opt/smart-fire-detection-v2/inspect_model.py
+
+
+# ============================================================
+# Main Detection Runtime
 # ============================================================
 
 ExecStart=/opt/smart-fire-detection-v2/venv/bin/python /opt/smart-fire-detection-v2/main.py
 
 
 # ============================================================
-# Restart policy
+# Startup Timeout
+# ============================================================
+#
+# เผื่อเวลาให้:
+#
+# - SHA256 verification
+# - YOLO model load
+# - Final Model Inspector
+#
+# ไม่ได้ใช้สำหรับ Runtime loop หลัง Start สำเร็จ
+#
+# ============================================================
+
+TimeoutStartSec=120
+
+
+# ============================================================
+# Restart Policy
+# ============================================================
+#
+# Runtime crash:
+#
+# restart หลัง 10 วินาที
+#
+# ถ้า Startup Gate FAIL:
+#
+# จะ retry แต่ถูกจำกัดด้วย:
+#
+# StartLimitIntervalSec=60
+# StartLimitBurst=3
+#
+# เพื่อไม่ให้ Final Contract ที่ผิด
+# ทำให้ service restart วนไม่หยุด
+#
 # ============================================================
 
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 
 
 # ============================================================
@@ -56,11 +178,30 @@ TimeoutStopSec=15
 
 
 # ============================================================
-# Basic security
+# Process Security
 # ============================================================
 
 NoNewPrivileges=true
+
 PrivateTmp=true
+
+UMask=0027
+
+
+# ============================================================
+# Logging
+# ============================================================
+#
+# stdout / stderr จะเข้า systemd journal
+#
+# ดูได้ด้วย:
+#
+# journalctl -u smart-fire-detection.service
+#
+# ============================================================
+
+StandardOutput=journal
+StandardError=journal
 
 
 [Install]
